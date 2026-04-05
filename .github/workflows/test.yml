@@ -39,5 +39,3 @@ jobs:
       - run: runway gitremote -a sl-mcp-server
 
       - run: runway app deploy
-        env:
-          PACK_VOLUME_KEY: ${{ secrets.PACK_VOLUME_KEY }}
