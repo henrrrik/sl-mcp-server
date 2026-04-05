@@ -10,8 +10,9 @@ Hosted on Runway at https://sl-mcp-server.pqapp.dev
 
 ## Build & Test
 - `go test -v -race ./...` — run tests (matches CI)
-- `go fmt ./...` — run before committing
+- `gofmt -s -w .` — run before committing
 - `go vet ./...` — run before committing
+- `gocyclo -over 10 .` — run before committing
 
 ## Project Structure
 - `slclient/` — `HTTPDoer` interface wrapping `http.Client` for testability, plus URL builder
