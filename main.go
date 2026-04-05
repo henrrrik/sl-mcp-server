@@ -9,8 +9,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mark3labs/mcp-go/server"
 	"github.com/henrrrik/sl-mcp-server/slclient"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 func main() {
