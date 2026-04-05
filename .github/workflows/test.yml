@@ -1,4 +1,4 @@
-name: Tests
+name: CI
 
 on:
   push:
@@ -19,3 +19,21 @@ jobs:
       - run: go vet ./...
 
       - run: go test -race ./...
+
+  deploy:
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: hostwithquantum/setup-runway@v0.5.0
+        with:
+          username: ${{ secrets.RUNWAY_USERNAME }}
+          password: ${{ secrets.RUNWAY_PASSWORD }}
+          public-key: ${{ secrets.PUBLIC_KEY }}
+          private-key: ${{ secrets.PRIVATE_KEY }}
+
+      - run: runway deploy
