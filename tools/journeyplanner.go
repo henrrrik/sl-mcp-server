@@ -13,7 +13,7 @@ import (
 const journeyPlannerBase = "https://journeyplanner.integration.sl.se"
 
 func SystemInfoTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
-	tool := mcp.NewTool("sl_system_info",
+	tool := mcp.NewTool("system_info",
 		mcp.WithDescription("Get SL timetable validity period"),
 	)
 
@@ -26,7 +26,7 @@ func SystemInfoTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 }
 
 func StopFinderTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
-	tool := mcp.NewTool("sl_stop_finder",
+	tool := mcp.NewTool("stop_finder",
 		mcp.WithDescription("Find SL stops/stations by name"),
 		mcp.WithString("name", mcp.Required(), mcp.Description("Stop name to search for")),
 	)
@@ -51,7 +51,7 @@ func StopFinderTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 }
 
 func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
-	tool := mcp.NewTool("sl_trips",
+	tool := mcp.NewTool("trips",
 		mcp.WithDescription("Plan a trip between two locations in Stockholm"),
 		mcp.WithString("origin", mcp.Required(), mcp.Description("Origin stop/location name")),
 		mcp.WithString("destination", mcp.Required(), mcp.Description("Destination stop/location name")),

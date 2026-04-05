@@ -41,7 +41,7 @@ func fetchJSON(ctx context.Context, client slclient.HTTPDoer, rawURL string) (*m
 }
 
 func SitesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
-	tool := mcp.NewTool("sl_sites",
+	tool := mcp.NewTool("sites",
 		mcp.WithDescription("List SL transit sites (stations/stops) in Stockholm"),
 	)
 
@@ -54,7 +54,7 @@ func SitesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 }
 
 func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
-	tool := mcp.NewTool("sl_departures",
+	tool := mcp.NewTool("departures",
 		mcp.WithDescription("Get real-time departures from an SL transit site"),
 		mcp.WithNumber("site_id", mcp.Required(), mcp.Description("Site ID (use sl_sites to find IDs)")),
 	)
@@ -75,7 +75,7 @@ func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 }
 
 func LinesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
-	tool := mcp.NewTool("sl_lines",
+	tool := mcp.NewTool("lines",
 		mcp.WithDescription("List SL transit lines"),
 	)
 
@@ -88,7 +88,7 @@ func LinesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 }
 
 func StopPointsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
-	tool := mcp.NewTool("sl_stop_points",
+	tool := mcp.NewTool("stop_points",
 		mcp.WithDescription("List SL stop points (platforms, quays)"),
 	)
 
@@ -101,7 +101,7 @@ func StopPointsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 }
 
 func TransportAuthoritiesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
-	tool := mcp.NewTool("sl_transport_authorities",
+	tool := mcp.NewTool("transport_authorities",
 		mcp.WithDescription("List transport authorities in Stockholm region"),
 	)
 

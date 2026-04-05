@@ -13,7 +13,7 @@ import (
 const deviationsBase = "https://deviations.integration.sl.se"
 
 func DeviationsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
-	tool := mcp.NewTool("sl_deviations",
+	tool := mcp.NewTool("deviations",
 		mcp.WithDescription("Get SL traffic deviations and disruptions in Stockholm public transport"),
 		mcp.WithBoolean("future", mcp.Description("Include future deviations")),
 		mcp.WithNumber("site", mcp.Description("Filter by site ID")),
