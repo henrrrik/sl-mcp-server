@@ -22,9 +22,13 @@ func (m *mockHTTPDoer) Do(req *http.Request) (*http.Response, error) {
 }
 
 func newMockDoer(body string) *mockHTTPDoer {
+	return newMockDoerWithStatus(body, 200)
+}
+
+func newMockDoerWithStatus(body string, status int) *mockHTTPDoer {
 	return &mockHTTPDoer{
 		response: &http.Response{
-			StatusCode: 200,
+			StatusCode: status,
 			Body:       io.NopCloser(strings.NewReader(body)),
 		},
 	}
@@ -66,6 +70,29 @@ func TestDeviationsTool_NoParams(t *testing.T) {
 	text := result.Content[0].(mcp.TextContent).Text
 	if !strings.Contains(text, "Avstängd hållplats") {
 		t.Error("result should contain fixture data")
+	}
+}
+
+func TestFetchJSON_HTTPError(t *testing.T) {
+	mock := newMockDoerWithStatus("not found", 404)
+
+	_, handler := DeviationsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.IsError {
+		t.Fatal("expected error result for HTTP 404")
+	}
+
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, "404") {
+		t.Errorf("expected error to mention status code, got %q", text)
 	}
 }
 

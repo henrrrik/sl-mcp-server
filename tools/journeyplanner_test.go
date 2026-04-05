@@ -120,6 +120,30 @@ func TestTripsTool(t *testing.T) {
 	}
 }
 
+func TestTripsTool_ClampsNumberOfTrips(t *testing.T) {
+	body := loadTestData(t, "trips.json")
+	mock := newMockDoer(body)
+
+	_, handler := TripsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"origin":          "Slussen",
+		"destination":     "T-Centralen",
+		"number_of_trips": float64(100),
+	}
+
+	_, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	q := mock.lastReq.URL.Query()
+	if q.Get("calc_number_of_trips") != "3" {
+		t.Errorf("expected clamped to 3, got %q", q.Get("calc_number_of_trips"))
+	}
+}
+
 func TestTripsTool_MissingOrigin(t *testing.T) {
 	mock := newMockDoer("{}")
 

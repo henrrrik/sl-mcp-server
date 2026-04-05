@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	"sl-mcp-server/slclient"
+	"github.com/henrrrik/sl-mcp-server/slclient"
 )
 
 func TestNewSLServer(t *testing.T) {

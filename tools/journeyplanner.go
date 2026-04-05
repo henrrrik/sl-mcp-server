@@ -7,7 +7,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"sl-mcp-server/slclient"
+	"github.com/henrrrik/sl-mcp-server/slclient"
 )
 
 const journeyPlannerBase = "https://journeyplanner.integration.sl.se"
@@ -66,6 +66,11 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 		}
 
 		numTrips := request.GetInt("number_of_trips", 3)
+		if numTrips < 1 {
+			numTrips = 1
+		} else if numTrips > 3 {
+			numTrips = 3
+		}
 
 		params := url.Values{
 			"type_origin":          {"any"},
