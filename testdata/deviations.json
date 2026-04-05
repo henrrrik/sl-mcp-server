@@ -1,0 +1,17 @@
+[
+  {
+    "deviation_case_id": 12345,
+    "message_variants": [
+      {
+        "header": "Avstängd hållplats",
+        "details": "Hållplats Slussen är avstängd",
+        "language": "sv"
+      }
+    ],
+    "scope": {
+      "lines": [
+        {"id": 1, "designation": "1", "transport_mode": "BUS"}
+      ]
+    }
+  }
+]

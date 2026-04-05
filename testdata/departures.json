@@ -1,0 +1,11 @@
+{
+  "departures": [
+    {
+      "destination": "Kungsträdgården",
+      "direction_code": 1,
+      "display": "2 min",
+      "line": {"id": 19, "designation": "19", "transport_mode": "METRO"}
+    }
+  ],
+  "stop_deviations": []
+}

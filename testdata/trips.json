@@ -1,0 +1,1 @@
+{"journeys": [{"tripId": "abc123", "tripDuration": "PT15M", "legs": [{"origin": {"name": "Slussen"}, "destination": {"name": "T-Centralen"}}]}]}
