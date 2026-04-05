@@ -18,16 +18,11 @@ Hosted on [Runway](https://www.runway.horse) at https://sl-mcp-server.pqapp.dev
 | `sl_transport_authorities` | List transport authorities |
 | `sl_system_info` | Timetable validity period |
 
-## Setup
+## Usage
 
 No API key required — SL's integration APIs are open.
 
-```sh
-go build -o sl-mcp-server
-PORT=5000 ./sl-mcp-server
-```
-
-The server runs as an SSE (Server-Sent Events) MCP transport on the specified port (default 5000).
+The hosted instance is available as an SSE MCP server at `https://sl-mcp-server.pqapp.dev/sse`.
 
 ### Claude Desktop
 
@@ -37,10 +32,17 @@ Add to your `claude_desktop_config.json`:
 {
   "mcpServers": {
     "sl": {
-      "command": "/path/to/sl-mcp-server"
+      "url": "https://sl-mcp-server.pqapp.dev/sse"
     }
   }
 }
+```
+
+### Self-hosting
+
+```sh
+go build -o sl-mcp-server
+PORT=5000 ./sl-mcp-server
 ```
 
 ## Development
