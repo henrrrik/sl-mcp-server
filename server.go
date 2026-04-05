@@ -1,6 +1,9 @@
 package main
 
 import (
+	"log"
+	"os"
+
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/henrrrik/sl-mcp-server/slclient"
@@ -8,6 +11,8 @@ import (
 )
 
 func NewSLServer(client slclient.HTTPDoer) *server.MCPServer {
+	logger := log.New(os.Stderr, "", log.LstdFlags)
+
 	s := server.NewMCPServer(
 		"sl-mcp-server",
 		"1.0.0",
@@ -15,7 +20,7 @@ func NewSLServer(client slclient.HTTPDoer) *server.MCPServer {
 	)
 
 	add := func(tool mcp.Tool, handler server.ToolHandlerFunc) {
-		s.AddTool(tool, handler)
+		s.AddTool(tool, tools.WithLogging(logger, tool.Name, handler))
 	}
 
 	add(tools.DeviationsTool(client))
