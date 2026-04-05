@@ -8,15 +8,15 @@ Hosted on [Runway](https://www.runway.horse) at https://sl-mcp-server.pqapp.dev
 
 | Tool | Description |
 |------|-------------|
-| `sl_departures` | Real-time departures from a stop |
-| `sl_trips` | Plan a trip between two locations |
-| `sl_stop_finder` | Search for stops by name |
-| `sl_deviations` | Traffic disruptions and deviations |
-| `sl_sites` | List all transit sites |
-| `sl_lines` | List all transit lines |
-| `sl_stop_points` | List stop points (platforms, quays) |
-| `sl_transport_authorities` | List transport authorities |
-| `sl_system_info` | Timetable validity period |
+| `departures` | Real-time departures from a stop |
+| `trips` | Plan a trip between two locations |
+| `stop_finder` | Search for stops by name |
+| `deviations` | Traffic disruptions and deviations |
+| `sites` | List all transit sites |
+| `lines` | List all transit lines |
+| `stop_points` | List stop points (platforms, quays) |
+| `transport_authorities` | List transport authorities |
+| `system_info` | Timetable validity period |
 
 ## Usage
 
