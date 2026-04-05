@@ -36,4 +36,4 @@ jobs:
           public-key: ${{ secrets.PUBLIC_KEY }}
           private-key: ${{ secrets.PRIVATE_KEY }}
 
-      - run: runway deploy
+      - run: runway app deploy
