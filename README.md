@@ -2,6 +2,8 @@
 
 An [MCP](https://modelcontextprotocol.io/) server for Stockholm's public transit (SL). Gives AI assistants access to real-time departures, trip planning, deviations, and more via SL's open APIs.
 
+Hosted on [Runway](https://www.runway.horse) at https://sl-mcp-server.pqapp.dev
+
 ## Tools
 
 | Tool | Description |
