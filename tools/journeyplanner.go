@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"net/url"
 
+	"github.com/henrrrik/sl-mcp-server/slclient"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"github.com/henrrrik/sl-mcp-server/slclient"
 )
 
 const journeyPlannerBase = "https://journeyplanner.integration.sl.se"

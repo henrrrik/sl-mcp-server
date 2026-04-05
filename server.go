@@ -4,10 +4,10 @@ import (
 	"log"
 	"os"
 
-	"github.com/mark3labs/mcp-go/mcp"
-	"github.com/mark3labs/mcp-go/server"
 	"github.com/henrrrik/sl-mcp-server/slclient"
 	"github.com/henrrrik/sl-mcp-server/tools"
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/mark3labs/mcp-go/server"
 )
 
 func NewSLServer(client slclient.HTTPDoer) *server.MCPServer {
