@@ -7,7 +7,7 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"sl-mcp-server/slclient"
+	"github.com/henrrrik/sl-mcp-server/slclient"
 )
 
 const deviationsBase = "https://deviations.integration.sl.se"

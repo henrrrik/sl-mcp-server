@@ -1,4 +1,4 @@
-module sl-mcp-server
+module github.com/henrrrik/sl-mcp-server
 
 go 1.26.1
 

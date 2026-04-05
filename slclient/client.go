@@ -3,6 +3,7 @@ package slclient
 import (
 	"net/http"
 	"net/url"
+	"time"
 )
 
 // HTTPDoer abstracts HTTP requests for testability.
@@ -10,9 +11,9 @@ type HTTPDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// NewClient returns an HTTPDoer backed by http.DefaultClient.
+// NewClient returns an HTTPDoer with sensible timeouts.
 func NewClient() HTTPDoer {
-	return http.DefaultClient
+	return &http.Client{Timeout: 15 * time.Second}
 }
 
 // BuildURL constructs a full URL from base, path, and query parameters.

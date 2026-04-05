@@ -9,10 +9,12 @@ import (
 
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"sl-mcp-server/slclient"
+	"github.com/henrrrik/sl-mcp-server/slclient"
 )
 
 const transportBase = "https://transport.integration.sl.se"
+
+const maxResponseSize = 5 * 1024 * 1024 // 5MB
 
 func fetchJSON(ctx context.Context, client slclient.HTTPDoer, rawURL string) (*mcp.CallToolResult, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
@@ -26,7 +28,11 @@ func fetchJSON(ctx context.Context, client slclient.HTTPDoer, rawURL string) (*m
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return mcp.NewToolResultError(fmt.Sprintf("SL API returned HTTP %d", resp.StatusCode)), nil
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
 		return mcp.NewToolResultError(err.Error()), nil
 	}

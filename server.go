@@ -3,8 +3,8 @@ package main
 import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
-	"sl-mcp-server/slclient"
-	"sl-mcp-server/tools"
+	"github.com/henrrrik/sl-mcp-server/slclient"
+	"github.com/henrrrik/sl-mcp-server/tools"
 )
 
 func NewSLServer(client slclient.HTTPDoer) *server.MCPServer {

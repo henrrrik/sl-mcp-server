@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/mark3labs/mcp-go/server"
-	"sl-mcp-server/slclient"
+	"github.com/henrrrik/sl-mcp-server/slclient"
 )
 
 func main() {
@@ -21,6 +25,21 @@ func main() {
 		server.WithKeepAlive(true),
 	)
 
-	log.Printf("SL MCP server listening on :%s", port)
-	log.Fatal(sseServer.Start(":" + port))
+	go func() {
+		log.Printf("SL MCP server listening on :%s", port)
+		if err := sseServer.Start(":" + port); err != nil {
+			log.Fatalf("server error: %v", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Println("shutting down server")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := sseServer.Shutdown(ctx); err != nil {
+		log.Printf("shutdown error: %v", err)
+	}
 }
