@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -115,7 +116,7 @@ func TestTripsTool(t *testing.T) {
 	}
 
 	text := result.Content[0].(mcp.TextContent).Text
-	if !strings.Contains(text, "T-Centralen") {
+	if !strings.Contains(text, "Vällingby") {
 		t.Error("result should contain fixture data")
 	}
 }
@@ -293,6 +294,186 @@ func TestTripsTool_NoTimeParamsOmitted(t *testing.T) {
 	if q.Get("itd_date") != "" || q.Get("itd_time") != "" || q.Get("itd_trip_date_time_dep_arr") != "" {
 		t.Errorf("expected no itd_* params when time is omitted, got date=%q time=%q dep_arr=%q",
 			q.Get("itd_date"), q.Get("itd_time"), q.Get("itd_trip_date_time_dep_arr"))
+	}
+}
+
+// tripsResult is a test-only shape for asserting on the trimmed response.
+type tripsResult struct {
+	Journeys []struct {
+		Duration     int    `json:"duration"`
+		Interchanges int    `json:"interchanges"`
+		Summary      string `json:"summary"`
+		Departure    string `json:"departure"`
+		Arrival      string `json:"arrival"`
+		Legs         []struct {
+			Mode      string `json:"mode"`
+			Line      string `json:"line"`
+			Direction string `json:"direction"`
+			From      string `json:"from"`
+			To        string `json:"to"`
+			Departure string `json:"departure"`
+			Arrival   string `json:"arrival"`
+			Duration  int    `json:"duration"`
+			Realtime  bool   `json:"realtime"`
+		} `json:"legs"`
+	} `json:"journeys"`
+}
+
+func callTrips(t *testing.T, extra map[string]any) string {
+	t.Helper()
+	body := loadTestData(t, "trips.json")
+	mock := newMockDoer(body)
+	_, handler := TripsTool(mock)
+
+	args := map[string]any{
+		"origin":      "Vällingby",
+		"destination": "Stockholm City",
+	}
+	for k, v := range extra {
+		args[k] = v
+	}
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = args
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].(mcp.TextContent).Text)
+	}
+	return result.Content[0].(mcp.TextContent).Text
+}
+
+func TestTripsTool_DefaultResponseTrimsVerboseFields(t *testing.T) {
+	text := callTrips(t, map[string]any{})
+
+	// These large fields should be dropped from the default response.
+	for _, forbidden := range []string{"coords", "stopSequence", "footPathInfo", "pathDescriptions"} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("default response should not contain %q, but did", forbidden)
+		}
+	}
+
+	// Real fixture is ~65 KB; trimmed target is well under 8 KB.
+	if len(text) > 8*1024 {
+		t.Errorf("default response should be < 8 KB, got %d bytes", len(text))
+	}
+}
+
+func TestTripsTool_DefaultResponseHasSummaryFields(t *testing.T) {
+	text := callTrips(t, map[string]any{})
+
+	var out tripsResult
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if len(out.Journeys) == 0 {
+		t.Fatal("expected at least one journey")
+	}
+	j := out.Journeys[0]
+	if j.Duration == 0 {
+		t.Error("expected non-zero duration")
+	}
+	if j.Summary == "" {
+		t.Error("expected summary field populated")
+	}
+	if j.Departure == "" {
+		t.Error("expected departure field populated")
+	}
+	if j.Arrival == "" {
+		t.Error("expected arrival field populated")
+	}
+}
+
+func TestTripsTool_LegsAreFlattened(t *testing.T) {
+	text := callTrips(t, map[string]any{})
+
+	var out tripsResult
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	legs := out.Journeys[0].Legs
+
+	// Fixture: Vällingby → Spånga station (bus 179) → Spånga (walk) → Stockholm City (Pendeltåg 43)
+	if len(legs) != 3 {
+		t.Fatalf("expected 3 legs, got %d", len(legs))
+	}
+
+	if legs[0].Mode != "bus" {
+		t.Errorf("leg[0] mode: expected 'bus', got %q", legs[0].Mode)
+	}
+	if legs[0].Line != "179" {
+		t.Errorf("leg[0] line: expected '179', got %q", legs[0].Line)
+	}
+	if legs[0].Direction == "" {
+		t.Errorf("leg[0] direction: expected populated, got empty")
+	}
+	if legs[0].From == "" || legs[0].To == "" {
+		t.Errorf("leg[0] from/to: expected populated, got from=%q to=%q", legs[0].From, legs[0].To)
+	}
+
+	if legs[1].Mode != "walk" {
+		t.Errorf("leg[1] mode: expected 'walk', got %q", legs[1].Mode)
+	}
+	if legs[1].Line != "" {
+		t.Errorf("leg[1] line: walking legs should have empty line, got %q", legs[1].Line)
+	}
+
+	if legs[2].Mode != "train" {
+		t.Errorf("leg[2] mode: expected 'train', got %q", legs[2].Mode)
+	}
+	if legs[2].Line != "43" {
+		t.Errorf("leg[2] line: expected '43', got %q", legs[2].Line)
+	}
+}
+
+func TestTripsTool_SummaryExcludesWalkingLegs(t *testing.T) {
+	text := callTrips(t, map[string]any{})
+
+	var out tripsResult
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	summary := out.Journeys[0].Summary
+
+	// "Buss 179 → Pendeltåg 43" — walking legs omitted
+	if !strings.Contains(summary, "179") || !strings.Contains(summary, "43") {
+		t.Errorf("summary should mention line numbers 179 and 43, got %q", summary)
+	}
+	if !strings.Contains(summary, "→") {
+		t.Errorf("summary should join legs with ' → ', got %q", summary)
+	}
+}
+
+func TestTripsTool_VerboseReturnsRaw(t *testing.T) {
+	text := callTrips(t, map[string]any{"verbose": true})
+
+	// Verbose should preserve the upstream shape, which has these fields.
+	for _, expected := range []string{"coords", "stopSequence", "tripDuration", "tripRtDuration"} {
+		if !strings.Contains(text, expected) {
+			t.Errorf("verbose response should contain %q, but did not", expected)
+		}
+	}
+}
+
+func TestTripsTool_ErrorResponsePassedThrough(t *testing.T) {
+	// When upstream returns only systemMessages (no journeys), pass through
+	// so callers see the error. Richer handling (candidates) comes later.
+	errBody := `{"systemMessages":[{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"}]}`
+	mock := newMockDoer(errBody)
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "x", "destination": "y"}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, "multiple matches") {
+		t.Errorf("expected error text to pass through, got %q", text)
 	}
 }
 

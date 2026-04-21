@@ -1,1 +1,2629 @@
-{"journeys": [{"tripId": "abc123", "tripDuration": "PT15M", "legs": [{"origin": {"name": "Slussen"}, "destination": {"name": "T-Centralen"}}]}]}
+{
+  "systemMessages": [
+    
+  ],
+  "journeys": [
+    {
+      "tripDuration": 1860,
+      "tripRtDuration": 1860,
+      "rating": 0,
+      "isAdditional": false,
+      "interchanges": 1,
+      "legs": [
+        {
+          "infos": [
+            
+          ],
+          "duration": 660,
+          "origin": {
+            "isGlobalId": true,
+            "id": "9025001000012559",
+            "name": "Vällingby, Stockholm",
+            "disassembledName": "E",
+            "type": "platform",
+            "coord": [
+              59.363567,
+              17.871569
+            ],
+            "niveau": 0,
+            "parent": {
+              "isGlobalId": true,
+              "id": "9021001012301000",
+              "name": "Vällingby, Stockholm",
+              "disassembledName": "Vällingby",
+              "type": "stop",
+              "parent": {
+                "id": "placeID:33001080:1",
+                "name": "Stockholm",
+                "type": "locality"
+              },
+              "properties": {
+                "stopId": "18012301"
+              },
+              "coord": [
+                59.363443,
+                17.87139
+              ],
+              "niveau": 0
+            },
+            "productClasses": [
+              5,
+              19
+            ],
+            "departureTimeBaseTimetable": "2026-04-21T21:03:00Z",
+            "departureTimePlanned": "2026-04-21T21:03:00Z",
+            "departureTimeEstimated": "2026-04-21T21:03:00Z",
+            "properties": {
+              "AREA_NIVEAU_DIVA": "0",
+              "area": "6",
+              "occupancy": "MANY_SEATS",
+              "platform": "1",
+              "stoppingPointPlanned": "E",
+              "platformName": "E",
+              "callType": [
+                "ONDEMAND"
+              ]
+            }
+          },
+          "destination": {
+            "isGlobalId": true,
+            "id": "9025001000050079",
+            "name": "Spånga station, Stockholm",
+            "disassembledName": "B",
+            "type": "platform",
+            "coord": [
+              59.382952,
+              17.898743
+            ],
+            "niveau": 0,
+            "parent": {
+              "isGlobalId": true,
+              "id": "9021001012138000",
+              "name": "Spånga station, Stockholm",
+              "disassembledName": "Spånga station",
+              "type": "stop",
+              "parent": {
+                "id": "placeID:33001080:1",
+                "name": "Stockholm",
+                "type": "locality"
+              },
+              "properties": {
+                "stopId": "18012138"
+              },
+              "coord": [
+                59.382911,
+                17.898824
+              ],
+              "niveau": 0
+            },
+            "productClasses": [
+              5
+            ],
+            "arrivalTimeBaseTimetable": "2026-04-21T21:14:00Z",
+            "arrivalTimePlanned": "2026-04-21T21:14:00Z",
+            "arrivalTimeEstimated": "2026-04-21T21:14:00Z",
+            "properties": {
+              "AREA_NIVEAU_DIVA": "0",
+              "area": "11",
+              "platform": "1",
+              "stoppingPointPlanned": "B",
+              "platformName": "B",
+              "callType": [
+                "ONDEMAND"
+              ]
+            }
+          },
+          "transportation": {
+            "id": "tfs:01179: :H:y01",
+            "name": "Buss blåbuss 179",
+            "number": "blåbuss 179",
+            "product": {
+              "id": 3,
+              "class": 5,
+              "name": "Buss",
+              "iconId": 3
+            },
+            "operator": {
+              "id": "1",
+              "name": "Storstockholms Lokaltrafik"
+            },
+            "destination": {
+              "id": "18050501",
+              "name": "Sollentuna station",
+              "type": "stop"
+            },
+            "properties": {
+              "tripCode": 211,
+              "timetablePeriod": "Current",
+              "lineDisplay": "LINE",
+              "globalId": "9011001017900000",
+              "RealtimeTripId": "9015001017900400",
+              "AVMSTripID": "9015001017900400"
+            },
+            "isSamtrafik": false,
+            "disassembledName": "179"
+          },
+          "stopSequence": [
+            {
+              "isGlobalId": true,
+              "id": "9025001000012559",
+              "name": "Vällingby, Stockholm",
+              "disassembledName": "E",
+              "type": "platform",
+              "coord": [
+                59.363567,
+                17.871569
+              ],
+              "niveau": 0,
+              "parent": {
+                "isGlobalId": true,
+                "id": "9021001012301000",
+                "name": "Vällingby, Stockholm",
+                "disassembledName": "Vällingby",
+                "type": "stop",
+                "parent": {
+                  "id": "placeID:33001080:1",
+                  "name": "Stockholm",
+                  "type": "locality"
+                },
+                "properties": {
+                  "stopId": "18012301"
+                },
+                "coord": [
+                  59.363443,
+                  17.87139
+                ],
+                "niveau": 0
+              },
+              "productClasses": [
+                5,
+                19
+              ],
+              "properties": {
+                "AREA_NIVEAU_DIVA": "0",
+                "area": "6",
+                "occupancy": "MANY_SEATS",
+                "platform": "1",
+                "zone": "tfs:34",
+                "stoppingPointPlanned": "E",
+                "platformName": "E"
+              },
+              "departureTimePlanned": "2026-04-21T21:03:00Z",
+              "departureTimeEstimated": "2026-04-21T21:03:00Z"
+            },
+            {
+              "isGlobalId": true,
+              "id": "9025001000012453",
+              "name": "Härjedalsgatan, Stockholm",
+              "disassembledName": "Härjedalsgatan",
+              "type": "platform",
+              "coord": [
+                59.367242,
+                17.872728
+              ],
+              "niveau": 0,
+              "parent": {
+                "isGlobalId": true,
+                "id": "9021001012452000",
+                "name": "Härjedalsgatan, Stockholm",
+                "disassembledName": "Härjedalsgatan",
+                "type": "stop",
+                "parent": {
+                  "id": "placeID:33001080:1",
+                  "name": "Stockholm",
+                  "type": "locality"
+                },
+                "properties": {
+                  "stopId": "18012452"
+                },
+                "coord": [
+                  59.366977,
+                  17.872611
+                ],
+                "niveau": 0
+              },
+              "productClasses": [
+                5
+              ],
+              "properties": {
+                "AREA_NIVEAU_DIVA": "0",
+                "area": "2",
+                "occupancy": "MANY_SEATS",
+                "platform": "2",
+                "zone": "tfs:34"
+              },
+              "departureTimePlanned": "2026-04-21T21:04:12Z",
+              "departureTimeEstimated": "2026-04-21T21:04:12Z",
+              "arrivalTimePlanned": "2026-04-21T21:04:12Z",
+              "arrivalTimeEstimated": "2026-04-21T21:04:12Z"
+            },
+            {
+              "isGlobalId": true,
+              "id": "9025001000012511",
+              "name": "Arbrågatan, Stockholm",
+              "disassembledName": "Arbrågatan",
+              "type": "platform",
+              "coord": [
+                59.368382,
+                17.869386
+              ],
+              "niveau": 0,
+              "parent": {
+                "isGlobalId": true,
+                "id": "9021001012511000",
+                "name": "Arbrågatan, Stockholm",
+                "disassembledName": "Arbrågatan",
+                "type": "stop",
+                "parent": {
+                  "id": "placeID:33001080:1",
+                  "name": "Stockholm",
+                  "type": "locality"
+                },
+                "properties": {
+                  "stopId": "18012511"
+                },
+                "coord": [
+                  59.368529,
+                  17.869135
+                ],
+                "niveau": 0
+              },
+              "productClasses": [
+                5
+              ],
+              "properties": {
+                "AREA_NIVEAU_DIVA": "0",
+                "area": "1",
+                "occupancy": "MANY_SEATS",
+                "platform": "1",
+                "zone": "tfs:34"
+              },
+              "departureTimePlanned": "2026-04-21T21:04:48Z",
+              "departureTimeEstimated": "2026-04-21T21:04:48Z",
+              "arrivalTimePlanned": "2026-04-21T21:04:48Z",
+              "arrivalTimeEstimated": "2026-04-21T21:04:48Z"
+            },
+            {
+              "isGlobalId": true,
+              "id": "9025001000051561",
+              "name": "Vinsta gård, Stockholm",
+              "disassembledName": "Vinsta gård",
+              "type": "platform",
+              "coord": [
+                59.372465,
+                17.865748
+              ],
+              "niveau": 0,
+              "parent": {
+                "isGlobalId": true,
+                "id": "9021001012456000",
+                "name": "Vinsta gård, Stockholm",
+                "disassembledName": "Vinsta gård",
+                "type": "stop",
+                "parent": {
+                  "id": "placeID:33001080:1",
+                  "name": "Stockholm",
+                  "type": "locality"
+                },
+                "properties": {
+                  "stopId": "18012456"
+                },
+                "coord": [
+                  59.372002,
+                  17.864913
+                ],
+                "niveau": 0
+              },
+              "productClasses": [
+                5
+              ],
+              "properties": {
+                "AREA_NIVEAU_DIVA": "0",
+                "area": "4",
+                "occupancy": "MANY_SEATS",
+                "platform": "2",
+                "zone": "tfs:34"
+              },
+              "departureTimePlanned": "2026-04-21T21:06:00Z",
+              "departureTimeEstimated": "2026-04-21T21:06:00Z",
+              "arrivalTimePlanned": "2026-04-21T21:06:00Z",
+              "arrivalTimeEstimated": "2026-04-21T21:06:00Z"
+            },
+            {
+              "isGlobalId": true,
+              "id": "9025001000051563",
+              "name": "Ryttmästarvägen, Stockholm",
+              "disassembledName": "Ryttmästarvägen",
+              "type": "platform",
+              "coord": [
+                59.373622,
+                17.868686
+              ],
+              "niveau": 0,
+              "parent": {
+                "isGlobalId": true,
+                "id": "9021001051562000",
+                "name": "Ryttmästarvägen, Stockholm",
+                "disassembledName": "Ryttmästarvägen",
+                "type": "stop",
+                "parent": {
+                  "id": "placeID:33001080:1",
+                  "name": "Stockholm",
+                  "type": "locality"
+                },
+                "properties": {
+                  "stopId": "18051562"
+                },
+                "coord": [
+                  59.374071,
+                  17.869539
+                ],
+                "niveau": 0
+              },
+              "productClasses": [
+                5
+              ],
+              "properties": {
+                "AREA_NIVEAU_DIVA": "0",
+                "area": "2",
+                "occupancy": "MANY_SEATS",
+                "platform": "1",
+                "zone": "tfs:34"
+              },
+              "departureTimePlanned": "2026-04-21T21:06:30Z",
+              "departureTimeEstimated": "2026-04-21T21:06:30Z",
+              "arrivalTimePlanned": "2026-04-21T21:06:30Z",
+              "arrivalTimeEstimated": "2026-04-21T21:06:30Z"
+            },
+            {
+              "isGlobalId": true,
+              "id": "9025001000051565",
+              "name": "Västergöksvägen, Stockholm",
+              "disassembledName": "Västergöksvägen",
+              "type": "platform",
+              "coord": [
+                59.37753,
+                17.87589
+              ],
+              "niveau": 0,
+              "parent": {
+                "isGlobalId": true,
+                "id": "9021001051564000",
+                "name": "Västergöksvägen, Stockholm",
+                "disassembledName": "Västergöksvägen",
+                "type": "stop",
+                "parent": {
+                  "id": "placeID:33001080:1",
+                  "name": "Stockholm",
+                  "type": "locality"
+                },
+                "properties": {
+                  "stopId": "18051564"
+                },
+                "coord": [
+                  59.377489,
+                  17.875809
+                ],
+                "niveau": 0
+              },
+              "productClasses": [
+                5
+              ],
+              "properties": {
+                "AREA_NIVEAU_DIVA": "0",
+                "area": "2",
+                "occupancy": "MANY_SEATS",
+                "platform": "1",
+                "zone": "tfs:34"
+              },
+              "departureTimePlanned": "2026-04-21T21:07:42Z",
+              "departureTimeEstimated": "2026-04-21T21:07:42Z",
+              "arrivalTimePlanned": "2026-04-21T21:07:42Z",
+              "arrivalTimeEstimated": "2026-04-21T21:07:42Z"
+            },
+            {
+              "isGlobalId": true,
+              "id": "9025001000012459",
+              "name": "Svandammen, Stockholm",
+              "disassembledName": "Svandammen",
+              "type": "platform",
+              "coord": [
+                59.380729,
+                17.893228
+              ],
+              "niveau": 0,
+              "parent": {
+                "isGlobalId": true,
+                "id": "9021001012458000",
+                "name": "Svandammen, Stockholm",
+                "disassembledName": "Svandammen",
+                "type": "stop",
+                "parent": {
+                  "id": "placeID:33001080:1",
+                  "name": "Stockholm",
+                  "type": "locality"
+                },
+                "properties": {
+                  "stopId": "18012458"
+                },
+                "coord": [
+                  59.380733,
+                  17.893201
+                ],
+                "niveau": 0
+              },
+              "productClasses": [
+                5
+              ],
+              "properties": {
+                "AREA_NIVEAU_DIVA": "0",
+                "area": "2",
+                "occupancy": "MANY_SEATS",
+                "platform": "1",
+                "zone": "tfs:34"
+              },
+              "departureTimePlanned": "2026-04-21T21:10:00Z",
+              "departureTimeEstimated": "2026-04-21T21:10:00Z",
+              "arrivalTimePlanned": "2026-04-21T21:10:00Z",
+              "arrivalTimeEstimated": "2026-04-21T21:10:00Z"
+            },
+            {
+              "isGlobalId": true,
+              "id": "9025001000050079",
+              "name": "Spånga station, Stockholm",
+              "disassembledName": "B",
+              "type": "platform",
+              "coord": [
+                59.382952,
+                17.898743
+              ],
+              "niveau": 0,
+              "parent": {
+                "isGlobalId": true,
+                "id": "9021001012138000",
+                "name": "Spånga station, Stockholm",
+                "disassembledName": "Spånga station",
+                "type": "stop",
+                "parent": {
+                  "id": "placeID:33001080:1",
+                  "name": "Stockholm",
+                  "type": "locality"
+                },
+                "properties": {
+                  "stopId": "18012138"
+                },
+                "coord": [
+                  59.382911,
+                  17.898824
+                ],
+                "niveau": 0
+              },
+              "productClasses": [
+                5
+              ],
+              "properties": {
+                "AREA_NIVEAU_DIVA": "0",
+                "area": "11",
+                "platform": "1",
+                "zone": "tfs:34",
+                "stoppingPointPlanned": "B",
+                "platformName": "B"
+              },
+              "arrivalTimePlanned": "2026-04-21T21:14:00Z",
+              "arrivalTimeEstimated": "2026-04-21T21:14:00Z"
+            }
+          ],
+          "coords": [
+            [
+              59.363556,
+              17.87155
+            ],
+            [
+              59.363694,
+              17.871748
+            ],
+            [
+              59.363795,
+              17.871824
+            ],
+            [
+              59.363866,
+              17.871683
+            ],
+            [
+              59.364335,
+              17.872629
+            ],
+            [
+              59.364532,
+              17.872339
+            ],
+            [
+              59.36467,
+              17.872244
+            ],
+            [
+              59.365405,
+              17.871946
+            ],
+            [
+              59.366484,
+              17.872398
+            ],
+            [
+              59.367199,
+              17.872712
+            ],
+            [
+              59.367238,
+              17.872727
+            ],
+            [
+              59.367398,
+              17.872798
+            ],
+            [
+              59.36753,
+              17.872852
+            ],
+            [
+              59.36758,
+              17.872491
+            ],
+            [
+              59.367658,
+              17.871896
+            ],
+            [
+              59.367668,
+              17.87181
+            ],
+            [
+              59.367679,
+              17.871723
+            ],
+            [
+              59.367692,
+              17.87164
+            ],
+            [
+              59.367715,
+              17.871459
+            ],
+            [
+              59.367741,
+              17.871301
+            ],
+            [
+              59.36777,
+              17.871135
+            ],
+            [
+              59.367802,
+              17.87097
+            ],
+            [
+              59.367856,
+              17.870727
+            ],
+            [
+              59.36789,
+              17.870558
+            ],
+            [
+              59.367907,
+              17.870483
+            ],
+            [
+              59.36794,
+              17.870369
+            ],
+            [
+              59.367975,
+              17.870252
+            ],
+            [
+              59.368008,
+              17.870165
+            ],
+            [
+              59.368077,
+              17.869961
+            ],
+            [
+              59.368104,
+              17.86989
+            ],
+            [
+              59.368134,
+              17.869824
+            ],
+            [
+              59.368197,
+              17.869699
+            ],
+            [
+              59.368297,
+              17.869522
+            ],
+            [
+              59.36838,
+              17.869388
+            ],
+            [
+              59.368375,
+              17.869389
+            ],
+            [
+              59.368809,
+              17.868722
+            ],
+            [
+              59.3691,
+              17.868455
+            ],
+            [
+              59.369532,
+              17.868308
+            ],
+            [
+              59.369823,
+              17.868214
+            ],
+            [
+              59.370301,
+              17.867442
+            ],
+            [
+              59.37095,
+              17.866364
+            ],
+            [
+              59.371145,
+              17.865759
+            ],
+            [
+              59.371678,
+              17.863795
+            ],
+            [
+              59.37182,
+              17.863898
+            ],
+            [
+              59.37206,
+              17.864201
+            ],
+            [
+              59.372248,
+              17.864583
+            ],
+            [
+              59.372363,
+              17.865067
+            ],
+            [
+              59.372474,
+              17.865725
+            ],
+            [
+              59.372472,
+              17.86578
+            ],
+            [
+              59.372566,
+              17.86633
+            ],
+            [
+              59.37268,
+              17.866819
+            ],
+            [
+              59.37272,
+              17.866949
+            ],
+            [
+              59.372761,
+              17.86706
+            ],
+            [
+              59.372861,
+              17.867291
+            ],
+            [
+              59.372924,
+              17.867416
+            ],
+            [
+              59.373187,
+              17.867896
+            ],
+            [
+              59.373628,
+              17.86869
+            ],
+            [
+              59.373628,
+              17.86869
+            ],
+            [
+              59.373773,
+              17.868951
+            ],
+            [
+              59.373804,
+              17.869014
+            ],
+            [
+              59.374002,
+              17.869372
+            ],
+            [
+              59.374035,
+              17.869432
+            ],
+            [
+              59.374109,
+              17.869554
+            ],
+            [
+              59.374204,
+              17.869741
+            ],
+            [
+              59.374567,
+              17.870397
+            ],
+            [
+              59.374599,
+              17.87046
+            ],
+            [
+              59.374674,
+              17.870597
+            ],
+            [
+              59.374774,
+              17.870774
+            ],
+            [
+              59.375489,
+              17.872107
+            ],
+            [
+              59.375577,
+              17.872281
+            ],
+            [
+              59.37568,
+              17.872453
+            ],
+            [
+              59.376266,
+              17.873542
+            ],
+            [
+              59.376351,
+              17.873707
+            ],
+            [
+              59.376483,
+              17.873944
+            ],
+            [
+              59.376647,
+              17.874245
+            ],
+            [
+              59.37678,
+              17.874498
+            ],
+            [
+              59.376879,
+              17.874677
+            ],
+            [
+              59.377108,
+              17.875099
+            ],
+            [
+              59.377181,
+              17.875238
+            ],
+            [
+              59.37728,
+              17.875416
+            ],
+            [
+              59.377534,
+              17.875885
+            ],
+            [
+              59.377767,
+              17.876316
+            ],
+            [
+              59.377837,
+              17.876459
+            ],
+            [
+              59.377959,
+              17.876667
+            ],
+            [
+              59.378005,
+              17.876752
+            ],
+            [
+              59.378039,
+              17.876809
+            ],
+            [
+              59.378105,
+              17.876937
+            ],
+            [
+              59.378464,
+              17.8776
+            ],
+            [
+              59.378596,
+              17.87784
+            ],
+            [
+              59.378837,
+              17.878302
+            ],
+            [
+              59.378931,
+              17.878491
+            ],
+            [
+              59.379218,
+              17.879046
+            ],
+            [
+              59.379792,
+              17.880102
+            ],
+            [
+              59.380128,
+              17.88081
+            ],
+            [
+              59.380157,
+              17.880877
+            ],
+            [
+              59.380199,
+              17.881059
+            ],
+            [
+              59.380231,
+              17.881316
+            ],
+            [
+              59.380321,
+              17.882267
+            ],
+            [
+              59.380341,
+              17.882553
+            ],
+            [
+              59.380529,
+              17.884542
+            ],
+            [
+              59.38054,
+              17.884734
+            ],
+            [
+              59.380582,
+              17.884986
+            ],
+            [
+              59.380617,
+              17.885041
+            ],
+            [
+              59.380696,
+              17.885119
+            ],
+            [
+              59.38082,
+              17.885224
+            ],
+            [
+              59.380758,
+              17.885549
+            ],
+            [
+              59.380733,
+              17.885717
+            ],
+            [
+              59.380679,
+              17.886138
+            ],
+            [
+              59.380641,
+              17.886399
+            ],
+            [
+              59.380607,
+              17.886654
+            ],
+            [
+              59.380481,
+              17.887862
+            ],
+            [
+              59.38044,
+              17.888294
+            ],
+            [
+              59.380419,
+              17.888555
+            ],
+            [
+              59.380401,
+              17.888816
+            ],
+            [
+              59.380381,
+              17.889166
+            ],
+            [
+              59.380372,
+              17.889402
+            ],
+            [
+              59.380362,
+              17.889618
+            ],
+            [
+              59.38036,
+              17.889706
+            ],
+            [
+              59.380355,
+              17.891025
+            ],
+            [
+              59.380352,
+              17.891167
+            ],
+            [
+              59.38035,
+              17.891416
+            ],
+            [
+              59.380374,
+              17.891665
+            ],
+            [
+              59.380388,
+              17.891839
+            ],
+            [
+              59.380413,
+              17.892007
+            ],
+            [
+              59.380445,
+              17.892172
+            ],
+            [
+              59.380464,
+              17.892252
+            ],
+            [
+              59.380529,
+              17.892483
+            ],
+            [
+              59.380577,
+              17.892645
+            ],
+            [
+              59.380679,
+              17.893048
+            ],
+            [
+              59.380731,
+              17.893232
+            ],
+            [
+              59.380728,
+              17.893224
+            ],
+            [
+              59.380819,
+              17.893499
+            ],
+            [
+              59.380884,
+              17.893729
+            ],
+            [
+              59.381001,
+              17.894154
+            ],
+            [
+              59.381053,
+              17.89442
+            ],
+            [
+              59.381124,
+              17.894743
+            ],
+            [
+              59.381206,
+              17.895153
+            ],
+            [
+              59.38126,
+              17.895411
+            ],
+            [
+              59.381273,
+              17.89548
+            ],
+            [
+              59.381311,
+              17.895733
+            ],
+            [
+              59.381419,
+              17.895827
+            ],
+            [
+              59.381464,
+              17.895858
+            ],
+            [
+              59.3815,
+              17.895912
+            ],
+            [
+              59.38173,
+              17.896332
+            ],
+            [
+              59.382798,
+              17.898213
+            ],
+            [
+              59.382883,
+              17.898394
+            ],
+            [
+              59.381963,
+              17.900432
+            ],
+            [
+              59.382003,
+              17.90055
+            ],
+            [
+              59.38205,
+              17.900644
+            ],
+            [
+              59.382087,
+              17.900625
+            ],
+            [
+              59.382217,
+              17.900431
+            ],
+            [
+              59.382424,
+              17.899964
+            ],
+            [
+              59.382956,
+              17.898729
+            ]
+          ],
+          "realtimeStatus": [
+            "MONITORED"
+          ],
+          "isRealtimeControlled": true
+        },
+        {
+          "infos": [
+            
+          ],
+          "duration": 240,
+          "footPathInfo": [
+            {
+              "duration": 240,
+              "footPathElem": [
+                {
+                  "attributes": {
+                    "distance": 100,
+                    "duration": 30,
+                    "elevDoorWidth": 0,
+                    "elevLength": 0,
+                    "elevWidth": 0,
+                    "maxStepHeight": 0,
+                    "narrowestWidth": -1,
+                    "numberSteps": 0,
+                    "rampInclination": 0,
+                    "rampLength": 0,
+                    "rampWidth": 0
+                  },
+                  "description": "",
+                  "destination": {
+                    "coord": [
+                      59.382998,
+                      17.899148
+                    ],
+                    "id": "9021001006041000",
+                    "isGlobalId": true,
+                    "name": "Spånga",
+                    "properties": {
+                      "area": 3,
+                      "areaGid": "9023001006041001",
+                      "areaName": "Spånga torg Bussar",
+                      "areaType": 32,
+                      "georef": "0:0::100",
+                      "platform": 0
+                    },
+                    "type": "stop"
+                  },
+                  "level": "LEVEL",
+                  "levelFrom": 0,
+                  "levelTo": 0,
+                  "openingHours": [
+                    
+                  ],
+                  "origin": {
+                    "coord": [
+                      59.382952,
+                      17.898743
+                    ],
+                    "id": "9021001012138000",
+                    "isGlobalId": true,
+                    "name": "Spånga station",
+                    "properties": {
+                      "area": 11,
+                      "areaGid": "",
+                      "areaName": "Spånga station",
+                      "areaType": 33,
+                      "georef": "254413322:1:MRCV:100",
+                      "platform": 0
+                    },
+                    "type": "stop"
+                  },
+                  "type": "UNKNOWN"
+                },
+                {
+                  "attributes": {
+                    "distance": 50,
+                    "duration": 10,
+                    "elevDoorWidth": 0,
+                    "elevLength": 0,
+                    "elevWidth": 0,
+                    "maxStepHeight": 0,
+                    "narrowestWidth": -1,
+                    "numberSteps": 0,
+                    "rampInclination": 0,
+                    "rampLength": 0,
+                    "rampWidth": 0
+                  },
+                  "description": "",
+                  "destination": {
+                    "coord": [
+                      59.383378,
+                      17.898734
+                    ],
+                    "id": "9021001006041000",
+                    "isGlobalId": true,
+                    "name": "Spånga",
+                    "properties": {
+                      "area": 1,
+                      "areaGid": "",
+                      "areaName": "Spånga",
+                      "areaType": 1,
+                      "georef": "500982121:460:MRCV:100",
+                      "platform": 0
+                    },
+                    "type": "stop"
+                  },
+                  "level": "LEVEL",
+                  "levelFrom": 0,
+                  "levelTo": 0,
+                  "openingHours": [
+                    
+                  ],
+                  "origin": {
+                    "coord": [
+                      59.382998,
+                      17.899148
+                    ],
+                    "id": "9021001006041000",
+                    "isGlobalId": true,
+                    "name": "Spånga",
+                    "properties": {
+                      "area": 3,
+                      "areaGid": "9023001006041001",
+                      "areaName": "Spånga torg Bussar",
+                      "areaType": 32,
+                      "georef": "0:0::100",
+                      "platform": 0
+                    },
+                    "type": "stop"
+                  },
+                  "type": "UNKNOWN"
+                }
+              ],
+              "position": "IDEST"
+            }
+          ],
+          "origin": {
+            "isGlobalId": true,
+            "id": "9025001000050079",
+            "name": "Spånga station, Stockholm",
+            "disassembledName": "B",
+            "type": "platform",
+            "coord": [
+              59.382952,
+              17.898743
+            ],
+            "niveau": 0,
+            "parent": {
+              "isGlobalId": true,
+              "id": "9021001012138000",
+              "name": "Spånga station, Stockholm",
+              "disassembledName": "Spånga station",
+              "type": "stop",
+              "parent": {
+                "id": "placeID:33001080:1",
+                "name": "Stockholm",
+                "type": "locality"
+              },
+              "properties": {
+                "stopId": "18012138"
+              },
+              "coord": [
+                59.382911,
+                17.898824
+              ],
+              "niveau": 0
+            },
+            "productClasses": [
+              5
+            ],
+            "departureTimeBaseTimetable": "2026-04-21T21:14:00Z",
+            "departureTimePlanned": "2026-04-21T21:14:00Z",
+            "departureTimeEstimated": "2026-04-21T21:14:00Z",
+            "properties": {
+              "AREA_NIVEAU_DIVA": "0",
+              "area": "11",
+              "platform": "1",
+              "stoppingPointPlanned": "B",
+              "platformName": "B"
+            }
+          },
+          "destination": {
+            "isGlobalId": true,
+            "id": "9025001000006041",
+            "name": "Spånga, Stockholm",
+            "disassembledName": "2",
+            "type": "platform",
+            "coord": [
+              59.383378,
+              17.898734
+            ],
+            "niveau": 0,
+            "parent": {
+              "isGlobalId": true,
+              "id": "9021001006041000",
+              "name": "Spånga, Stockholm",
+              "disassembledName": "Spånga",
+              "type": "stop",
+              "parent": {
+                "id": "placeID:33001080:1",
+                "name": "Stockholm",
+                "type": "locality"
+              },
+              "properties": {
+                "stopId": "18006041"
+              },
+              "coord": [
+                59.383849,
+                17.897737
+              ],
+              "niveau": 0
+            },
+            "productClasses": [
+              0
+            ],
+            "arrivalTimeBaseTimetable": "2026-04-21T21:18:00Z",
+            "arrivalTimePlanned": "2026-04-21T21:18:00Z",
+            "arrivalTimeEstimated": "2026-04-21T21:18:00Z",
+            "properties": {
+              "AREA_NIVEAU_DIVA": "0",
+              "area": "1",
+              "platform": "1",
+              "stoppingPointPlanned": "2",
+              "platformName": "2"
+            }
+          },
+          "transportation": {
+            "product": {
+              "class": 99,
+              "name": "footpath",
+              "iconId": 99
+            },
+            "properties": {
+              "tripCode": 0,
+              "lineDisplay": "LINE"
+            },
+            "isSamtrafik": false
+          },
+          "stopSequence": [
+            {
+              "isGlobalId": true,
+              "id": "9025001000050079",
+              "name": "Spånga station, Stockholm",
+              "disassembledName": "Spånga station",
+              "type": "platform",
+              "coord": [
+                59.382952,
+                17.898743
+              ],
+              "niveau": 0,
+              "parent": {
+                "isGlobalId": true,
+                "id": "9021001012138000",
+                "name": "Spånga station, Stockholm",
+                "disassembledName": "Spånga station",
+                "type": "stop",
+                "parent": {
+                  "id": "placeID:33001080:1",
+                  "name": "Stockholm",
+                  "type": "locality"
+                },
+                "properties": {
+                  "stopId": "18012138"
+                },
+                "coord": [
+                  59.382911,
+                  17.898824
+                ],
+                "niveau": 0
+              },
+              "productClasses": [
+                5
+              ],
+              "properties": {
+                "AREA_NIVEAU_DIVA": "0",
+                "area": "11",
+                "platform": "1",
+                "zone": "tfs:34"
+              },
+              "departureTimePlanned": "2026-04-21T21:14:00Z"
+            },
+            {
+              "isGlobalId": true,
+              "id": "9025001000006041",
+              "name": "Spånga, Stockholm",
+              "disassembledName": "Spånga",
+              "type": "platform",
+              "coord": [
+                59.383378,
+                17.898734
+              ],
+              "niveau": 0,
+              "parent": {
+                "isGlobalId": true,
+                "id": "9021001006041000",
+                "name": "Spånga, Stockholm",
+                "disassembledName": "Spånga",
+                "type": "stop",
+                "parent": {
+                  "id": "placeID:33001080:1",
+                  "name": "Stockholm",
+                  "type": "locality"
+                },
+                "properties": {
+                  "stopId": "18006041"
+                },
+                "coord": [
+                  59.383849,
+                  17.897737
+                ],
+                "niveau": 0
+              },
+              "productClasses": [
+                0
+              ],
+              "properties": {
+                "AREA_NIVEAU_DIVA": "0",
+                "area": "1",
+                "platform": "1",
+                "zone": "tfs:34"
+              },
+              "arrivalTimePlanned": "2026-04-21T21:18:00Z"
+            }
+          ],
+          "coords": [
+            [
+              59.383013,
+              17.898632
+            ],
+            [
+              59.382998,
+              17.899148
+            ],
+            [
+              59.383412,
+              17.898803
+            ]
+          ]
+        },
+        {
+          "infos": [
+            
+          ],
+          "duration": 840,
+          "origin": {
+            "isGlobalId": true,
+            "id": "9025001000006041",
+            "name": "Spånga, Stockholm",
+            "disassembledName": "2",
+            "type": "platform",
+            "coord": [
+              59.383378,
+              17.898734
+            ],
+            "niveau": 0,
+            "parent": {
+              "isGlobalId": true,
+              "id": "9021001006041000",
+              "name": "Spånga, Stockholm",
+              "disassembledName": "Spånga",
+              "type": "stop",
+              "parent": {
+                "id": "placeID:33001080:1",
+                "name": "Stockholm",
+                "type": "locality"
+              },
+              "properties": {
+                "stopId": "18006041"
+              },
+              "coord": [
+                59.383849,
+                17.897737
+              ],
+              "niveau": 0
+            },
+            "productClasses": [
+              0
+            ],
+            "departureTimeBaseTimetable": "2026-04-21T21:20:00Z",
+            "departureTimePlanned": "2026-04-21T21:20:00Z",
+            "departureTimeEstimated": "2026-04-21T21:20:00Z",
+            "properties": {
+              "AREA_NIVEAU_DIVA": "0",
+              "area": "1",
+              "occupancy": "MANY_SEATS",
+              "platform": "1",
+              "stoppingPointPlanned": "2",
+              "platformName": "2"
+            }
+          },
+          "destination": {
+            "isGlobalId": true,
+            "id": "9025001000005313",
+            "name": "Stockholm City, Stockholm",
+            "disassembledName": "4",
+            "type": "platform",
+            "coord": [
+              59.331141,
+              18.059497
+            ],
+            "niveau": 0,
+            "parent": {
+              "isGlobalId": true,
+              "id": "9021001005310000",
+              "name": "Stockholm City, Stockholm",
+              "disassembledName": "Stockholm City",
+              "type": "stop",
+              "parent": {
+                "id": "placeID:33001080:1",
+                "name": "Stockholm",
+                "type": "locality"
+              },
+              "properties": {
+                "stopId": "18005310"
+              },
+              "coord": [
+                59.331141,
+                18.059443
+              ],
+              "niveau": 0
+            },
+            "productClasses": [
+              0
+            ],
+            "arrivalTimeBaseTimetable": "2026-04-21T21:34:00Z",
+            "arrivalTimePlanned": "2026-04-21T21:34:00Z",
+            "arrivalTimeEstimated": "2026-04-21T21:34:00Z",
+            "properties": {
+              "AREA_NIVEAU_DIVA": "0",
+              "area": "4",
+              "platform": "1",
+              "stoppingPointPlanned": "4",
+              "platformName": "4"
+            }
+          },
+          "transportation": {
+            "id": "tfs:04043: :H:y01",
+            "name": "Tåg Pendeltåg 43",
+            "number": "Pendeltåg 43",
+            "product": {
+              "id": 1,
+              "class": 0,
+              "name": "Tåg",
+              "iconId": 6
+            },
+            "operator": {
+              "id": "1",
+              "name": "Storstockholms Lokaltrafik"
+            },
+            "destination": {
+              "id": "18006191",
+              "name": "Tungelsta",
+              "type": "stop"
+            },
+            "properties": {
+              "tripCode": 742,
+              "timetablePeriod": "Current",
+              "lineDisplay": "LINE",
+              "globalId": "9011001004300000",
+              "RealtimeTripId": "9015001004302579",
+              "shortTrain": true,
+              "AVMSTripID": "9015001004302579"
+            },
+            "isSamtrafik": false,
+            "disassembledName": "43"
+          },
+          "stopSequence": [
+            {
+              "isGlobalId": true,
+              "id": "9025001000006041",
+              "name": "Spånga, Stockholm",
+              "disassembledName": "2",
+              "type": "platform",
+              "coord": [
+                59.383378,
+                17.898734
+              ],
+              "niveau": 0,
+              "parent": {
+                "isGlobalId": true,
+                "id": "9021001006041000",
+                "name": "Spånga, Stockholm",
+                "disassembledName": "Spånga",
+                "type": "stop",
+                "parent": {
+                  "id": "placeID:33001080:1",
+                  "name": "Stockholm",
+                  "type": "locality"
+                },
+                "properties": {
+                  "stopId": "18006041"
+                },
+                "coord": [
+                  59.383849,
+                  17.897737
+                ],
+                "niveau": 0
+              },
+              "productClasses": [
+                0
+              ],
+              "properties": {
+                "AREA_NIVEAU_DIVA": "0",
+                "area": "1",
+                "occupancy": "MANY_SEATS",
+                "platform": "1",
+                "zone": "tfs:34",
+                "stoppingPointPlanned": "2",
+                "platformName": "2"
+              },
+              "departureTimePlanned": "2026-04-21T21:20:00Z",
+              "departureTimeEstimated": "2026-04-21T21:20:00Z"
+            },
+            {
+              "isGlobalId": true,
+              "id": "9025001000006031",
+              "name": "Sundbyberg, Sundbyberg",
+              "disassembledName": "3",
+              "type": "platform",
+              "coord": [
+                59.360678,
+                17.971965
+              ],
+              "niveau": 0,
+              "parent": {
+                "isGlobalId": true,
+                "id": "9021001006031000",
+                "name": "Sundbyberg, Sundbyberg",
+                "disassembledName": "Sundbyberg",
+                "type": "stop",
+                "parent": {
+                  "id": "placeID:33001083:1",
+                  "name": "Sundbyberg",
+                  "type": "locality"
+                },
+                "properties": {
+                  "stopId": "18006031"
+                },
+                "coord": [
+                  59.360944,
+                  17.971237
+                ],
+                "niveau": 0
+              },
+              "productClasses": [
+                0
+              ],
+              "properties": {
+                "AREA_NIVEAU_DIVA": "0",
+                "area": "1",
+                "occupancy": "MANY_SEATS",
+                "platform": "1",
+                "zone": "tfs:34",
+                "stoppingPointPlanned": "3",
+                "platformName": "3"
+              },
+              "departureTimePlanned": "2026-04-21T21:26:00Z",
+              "departureTimeEstimated": "2026-04-21T21:26:00Z",
+              "arrivalTimePlanned": "2026-04-21T21:25:00Z",
+              "arrivalTimeEstimated": "2026-04-21T21:25:00Z"
+            },
+            {
+              "isGlobalId": true,
+              "id": "9025001000005321",
+              "name": "Stockholm Odenplan, Stockholm",
+              "disassembledName": "2",
+              "type": "platform",
+              "coord": [
+                59.343208,
+                18.045717
+              ],
+              "niveau": 0,
+              "parent": {
+                "isGlobalId": true,
+                "id": "9021001005320000",
+                "name": "Stockholm Odenplan, Stockholm",
+                "disassembledName": "Stockholm Odenplan",
+                "type": "stop",
+                "parent": {
+                  "id": "placeID:33001080:1",
+                  "name": "Stockholm",
+                  "type": "locality"
+                },
+                "properties": {
+                  "stopId": "18005320"
+                },
+                "coord": [
+                  59.343213,
+                  18.045717
+                ],
+                "niveau": 0
+              },
+              "productClasses": [
+                0
+              ],
+              "properties": {
+                "AREA_NIVEAU_DIVA": "0",
+                "area": "2",
+                "occupancy": "MANY_SEATS",
+                "platform": "1",
+                "zone": "tfs:33",
+                "stoppingPointPlanned": "2",
+                "platformName": "2"
+              },
+              "departureTimePlanned": "2026-04-21T21:31:00Z",
+              "departureTimeEstimated": "2026-04-21T21:31:00Z",
+              "arrivalTimePlanned": "2026-04-21T21:31:00Z",
+              "arrivalTimeEstimated": "2026-04-21T21:31:00Z"
+            },
+            {
+              "isGlobalId": true,
+              "id": "9025001000005313",
+              "name": "Stockholm City, Stockholm",
+              "disassembledName": "4",
+              "type": "platform",
+              "coord": [
+                59.331141,
+                18.059497
+              ],
+              "niveau": 0,
+              "parent": {
+                "isGlobalId": true,
+                "id": "9021001005310000",
+                "name": "Stockholm City, Stockholm",
+                "disassembledName": "Stockholm City",
+                "type": "stop",
+                "parent": {
+                  "id": "placeID:33001080:1",
+                  "name": "Stockholm",
+                  "type": "locality"
+                },
+                "properties": {
+                  "stopId": "18005310"
+                },
+                "coord": [
+                  59.331141,
+                  18.059443
+                ],
+                "niveau": 0
+              },
+              "productClasses": [
+                0
+              ],
+              "properties": {
+                "AREA_NIVEAU_DIVA": "0",
+                "area": "4",
+                "platform": "1",
+                "zone": "tfs:33",
+                "stoppingPointPlanned": "4",
+                "platformName": "4"
+              },
+              "arrivalTimePlanned": "2026-04-21T21:34:00Z",
+              "arrivalTimeEstimated": "2026-04-21T21:34:00Z"
+            }
+          ],
+          "properties": {
+            "tripId": "9015001004302579"
+          },
+          "coords": [
+            [
+              59.383383,
+              17.898733
+            ],
+            [
+              59.382167,
+              17.901269
+            ],
+            [
+              59.380897,
+              17.904107
+            ],
+            [
+              59.38006,
+              17.905873
+            ],
+            [
+              59.378927,
+              17.908295
+            ],
+            [
+              59.378513,
+              17.909189
+            ],
+            [
+              59.378122,
+              17.910009
+            ],
+            [
+              59.377462,
+              17.911418
+            ],
+            [
+              59.376806,
+              17.912868
+            ],
+            [
+              59.376259,
+              17.914084
+            ],
+            [
+              59.375597,
+              17.915536
+            ],
+            [
+              59.375141,
+              17.916565
+            ],
+            [
+              59.374649,
+              17.917667
+            ],
+            [
+              59.374608,
+              17.917763
+            ],
+            [
+              59.374564,
+              17.917882
+            ],
+            [
+              59.374162,
+              17.919001
+            ],
+            [
+              59.373858,
+              17.919921
+            ],
+            [
+              59.373447,
+              17.921301
+            ],
+            [
+              59.37341,
+              17.921429
+            ],
+            [
+              59.373082,
+              17.922796
+            ],
+            [
+              59.372609,
+              17.924664
+            ],
+            [
+              59.372278,
+              17.925938
+            ],
+            [
+              59.371782,
+              17.927981
+            ],
+            [
+              59.371294,
+              17.93002
+            ],
+            [
+              59.369716,
+              17.936416
+            ],
+            [
+              59.367835,
+              17.944029
+            ],
+            [
+              59.367809,
+              17.944144
+            ],
+            [
+              59.367633,
+              17.944979
+            ],
+            [
+              59.367342,
+              17.946152
+            ],
+            [
+              59.367102,
+              17.947186
+            ],
+            [
+              59.366619,
+              17.949299
+            ],
+            [
+              59.366586,
+              17.94943
+            ],
+            [
+              59.36631,
+              17.950487
+            ],
+            [
+              59.365978,
+              17.951829
+            ],
+            [
+              59.365724,
+              17.952805
+            ],
+            [
+              59.365454,
+              17.953939
+            ],
+            [
+              59.365424,
+              17.954074
+            ],
+            [
+              59.365232,
+              17.954988
+            ],
+            [
+              59.365214,
+              17.955087
+            ],
+            [
+              59.365199,
+              17.955188
+            ],
+            [
+              59.365156,
+              17.955534
+            ],
+            [
+              59.365143,
+              17.955658
+            ],
+            [
+              59.365006,
+              17.957233
+            ],
+            [
+              59.364965,
+              17.957718
+            ],
+            [
+              59.364952,
+              17.957838
+            ],
+            [
+              59.364932,
+              17.957955
+            ],
+            [
+              59.364793,
+              17.958715
+            ],
+            [
+              59.364762,
+              17.958846
+            ],
+            [
+              59.364651,
+              17.959292
+            ],
+            [
+              59.364617,
+              17.959421
+            ],
+            [
+              59.364579,
+              17.959546
+            ],
+            [
+              59.36369,
+              17.962354
+            ],
+            [
+              59.36283,
+              17.965236
+            ],
+            [
+              59.362794,
+              17.965364
+            ],
+            [
+              59.362654,
+              17.965884
+            ],
+            [
+              59.362622,
+              17.965994
+            ],
+            [
+              59.362248,
+              17.967212
+            ],
+            [
+              59.361328,
+              17.970236
+            ],
+            [
+              59.361293,
+              17.970342
+            ],
+            [
+              59.361268,
+              17.970409
+            ],
+            [
+              59.360887,
+              17.971366
+            ],
+            [
+              59.360849,
+              17.971467
+            ],
+            [
+              59.360809,
+              17.971591
+            ],
+            [
+              59.360684,
+              17.971987
+            ],
+            [
+              59.36012,
+              17.973769
+            ],
+            [
+              59.359668,
+              17.975067
+            ],
+            [
+              59.359618,
+              17.975204
+            ],
+            [
+              59.358117,
+              17.978797
+            ],
+            [
+              59.355857,
+              17.984286
+            ],
+            [
+              59.355804,
+              17.984418
+            ],
+            [
+              59.355758,
+              17.984557
+            ],
+            [
+              59.35563,
+              17.984964
+            ],
+            [
+              59.3556,
+              17.985074
+            ],
+            [
+              59.355481,
+              17.985539
+            ],
+            [
+              59.355452,
+              17.985673
+            ],
+            [
+              59.355358,
+              17.986136
+            ],
+            [
+              59.355285,
+              17.986593
+            ],
+            [
+              59.355264,
+              17.986733
+            ],
+            [
+              59.355254,
+              17.986813
+            ],
+            [
+              59.355194,
+              17.987384
+            ],
+            [
+              59.355158,
+              17.987941
+            ],
+            [
+              59.355153,
+              17.988044
+            ],
+            [
+              59.35509,
+              17.991632
+            ],
+            [
+              59.354959,
+              17.995247
+            ],
+            [
+              59.354851,
+              17.997592
+            ],
+            [
+              59.354773,
+              18.001411
+            ],
+            [
+              59.354776,
+              18.005521
+            ],
+            [
+              59.35478,
+              18.005604
+            ],
+            [
+              59.354786,
+              18.005666
+            ],
+            [
+              59.354923,
+              18.007015
+            ],
+            [
+              59.354933,
+              18.007159
+            ],
+            [
+              59.35497,
+              18.007816
+            ],
+            [
+              59.354994,
+              18.008531
+            ],
+            [
+              59.354997,
+              18.008678
+            ],
+            [
+              59.354994,
+              18.008802
+            ],
+            [
+              59.354971,
+              18.009507
+            ],
+            [
+              59.354967,
+              18.00959
+            ],
+            [
+              59.354961,
+              18.009671
+            ],
+            [
+              59.354918,
+              18.010068
+            ],
+            [
+              59.354874,
+              18.010553
+            ],
+            [
+              59.354866,
+              18.010633
+            ],
+            [
+              59.354853,
+              18.010712
+            ],
+            [
+              59.354656,
+              18.011689
+            ],
+            [
+              59.354636,
+              18.011786
+            ],
+            [
+              59.354601,
+              18.011915
+            ],
+            [
+              59.354361,
+              18.01273
+            ],
+            [
+              59.354331,
+              18.012816
+            ],
+            [
+              59.354289,
+              18.01291
+            ],
+            [
+              59.35364,
+              18.014271
+            ],
+            [
+              59.353603,
+              18.014346
+            ],
+            [
+              59.35357,
+              18.0144
+            ],
+            [
+              59.353493,
+              18.014513
+            ],
+            [
+              59.35344,
+              18.014585
+            ],
+            [
+              59.353229,
+              18.014834
+            ],
+            [
+              59.353164,
+              18.014903
+            ],
+            [
+              59.352598,
+              18.015479
+            ],
+            [
+              59.350534,
+              18.016753
+            ],
+            [
+              59.349547,
+              18.017272
+            ],
+            [
+              59.348925,
+              18.017665
+            ],
+            [
+              59.348845,
+              18.017719
+            ],
+            [
+              59.348318,
+              18.018158
+            ],
+            [
+              59.348241,
+              18.018228
+            ],
+            [
+              59.347705,
+              18.018819
+            ],
+            [
+              59.347019,
+              18.019604
+            ],
+            [
+              59.346937,
+              18.019703
+            ],
+            [
+              59.346006,
+              18.020964
+            ],
+            [
+              59.345877,
+              18.021187
+            ],
+            [
+              59.345753,
+              18.02143
+            ],
+            [
+              59.345623,
+              18.021704
+            ],
+            [
+              59.345511,
+              18.021978
+            ],
+            [
+              59.345411,
+              18.022232
+            ],
+            [
+              59.345235,
+              18.022753
+            ],
+            [
+              59.345151,
+              18.023062
+            ],
+            [
+              59.345057,
+              18.023422
+            ],
+            [
+              59.344965,
+              18.023837
+            ],
+            [
+              59.344903,
+              18.024135
+            ],
+            [
+              59.344843,
+              18.024511
+            ],
+            [
+              59.344793,
+              18.024855
+            ],
+            [
+              59.344757,
+              18.025192
+            ],
+            [
+              59.344721,
+              18.025584
+            ],
+            [
+              59.344703,
+              18.025928
+            ],
+            [
+              59.344689,
+              18.026234
+            ],
+            [
+              59.344675,
+              18.026699
+            ],
+            [
+              59.344667,
+              18.027223
+            ],
+            [
+              59.344665,
+              18.027967
+            ],
+            [
+              59.344666,
+              18.028602
+            ],
+            [
+              59.344672,
+              18.02966
+            ],
+            [
+              59.344672,
+              18.030322
+            ],
+            [
+              59.344676,
+              18.031387
+            ],
+            [
+              59.344679,
+              18.033098
+            ],
+            [
+              59.344687,
+              18.034715
+            ],
+            [
+              59.344683,
+              18.035573
+            ],
+            [
+              59.344688,
+              18.036987
+            ],
+            [
+              59.34469,
+              18.037797
+            ],
+            [
+              59.34469,
+              18.038494
+            ],
+            [
+              59.344662,
+              18.039137
+            ],
+            [
+              59.344625,
+              18.039736
+            ],
+            [
+              59.344575,
+              18.040331
+            ],
+            [
+              59.344507,
+              18.040898
+            ],
+            [
+              59.344432,
+              18.041382
+            ],
+            [
+              59.344353,
+              18.041777
+            ],
+            [
+              59.344241,
+              18.042319
+            ],
+            [
+              59.344084,
+              18.042904
+            ],
+            [
+              59.343432,
+              18.045209
+            ],
+            [
+              59.343265,
+              18.045792
+            ],
+            [
+              59.34326,
+              18.045777
+            ],
+            [
+              59.343146,
+              18.046175
+            ],
+            [
+              59.34291,
+              18.046973
+            ],
+            [
+              59.342693,
+              18.047734
+            ],
+            [
+              59.342566,
+              18.048224
+            ],
+            [
+              59.342419,
+              18.048773
+            ],
+            [
+              59.342262,
+              18.049395
+            ],
+            [
+              59.342094,
+              18.050046
+            ],
+            [
+              59.341949,
+              18.050578
+            ],
+            [
+              59.341829,
+              18.050981
+            ],
+            [
+              59.341705,
+              18.051405
+            ],
+            [
+              59.341567,
+              18.051815
+            ],
+            [
+              59.341365,
+              18.052386
+            ],
+            [
+              59.341174,
+              18.052854
+            ],
+            [
+              59.34099,
+              18.053278
+            ],
+            [
+              59.34077,
+              18.053754
+            ],
+            [
+              59.340526,
+              18.054207
+            ],
+            [
+              59.340302,
+              18.054617
+            ],
+            [
+              59.339797,
+              18.055384
+            ],
+            [
+              59.339539,
+              18.055706
+            ],
+            [
+              59.339359,
+              18.055925
+            ],
+            [
+              59.339105,
+              18.056211
+            ],
+            [
+              59.338764,
+              18.05654
+            ],
+            [
+              59.338491,
+              18.056773
+            ],
+            [
+              59.33824,
+              18.05697
+            ],
+            [
+              59.337829,
+              18.057255
+            ],
+            [
+              59.337563,
+              18.057408
+            ],
+            [
+              59.337133,
+              18.057598
+            ],
+            [
+              59.336771,
+              18.057722
+            ],
+            [
+              59.336277,
+              18.057882
+            ],
+            [
+              59.335978,
+              18.057969
+            ],
+            [
+              59.335533,
+              18.058115
+            ],
+            [
+              59.33524,
+              18.058195
+            ],
+            [
+              59.33481,
+              18.058304
+            ],
+            [
+              59.334327,
+              18.058435
+            ],
+            [
+              59.3338,
+              18.058566
+            ],
+            [
+              59.333149,
+              18.05874
+            ],
+            [
+              59.332648,
+              18.058856
+            ],
+            [
+              59.3323,
+              18.058966
+            ],
+            [
+              59.331809,
+              18.059082
+            ],
+            [
+              59.331386,
+              18.059176
+            ],
+            [
+              59.331127,
+              18.059239
+            ]
+          ],
+          "realtimeStatus": [
+            "MONITORED"
+          ],
+          "isRealtimeControlled": true
+        }
+      ],
+      "daysOfService": {
+        "rvb": "000000000000000000000000001000000000000000000000"
+      }
+    }
+  ]
+}

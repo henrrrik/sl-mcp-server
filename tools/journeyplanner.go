@@ -56,12 +56,13 @@ func StopFinderTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 
 func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("trips",
-		mcp.WithDescription("Plan a trip between two locations in Stockholm"),
+		mcp.WithDescription("Plan a trip between two locations in Stockholm. Returns a trimmed, LLM-friendly summary by default; set verbose=true for the full upstream payload."),
 		mcp.WithString("origin", mcp.Required(), mcp.Description("Origin stop/location name")),
 		mcp.WithString("destination", mcp.Required(), mcp.Description("Destination stop/location name")),
 		mcp.WithNumber("number_of_trips", mcp.Description("Number of trips to return (1-3, default 3)")),
 		mcp.WithString("time", mcp.Description("ISO 8601 departure/arrival time (e.g. 2026-04-22T09:00:00+02:00). Defaults to now.")),
 		mcp.WithString("time_mode", mcp.Description("'depart' or 'arrive' (default 'depart'). Only meaningful when 'time' is set.")),
+		mcp.WithBoolean("verbose", mcp.Description("Return the raw upstream response including coords, stopSequence, and footpath details. Default false.")),
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -91,7 +92,20 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 		}
 
 		u := slclient.BuildURL(journeyPlannerBase, "/v2/trips", params)
-		return fetchJSON(ctx, client, u)
+
+		if request.GetBool("verbose", false) {
+			return fetchJSON(ctx, client, u)
+		}
+
+		body, errResult := fetchJSONRaw(ctx, client, u)
+		if errResult != nil {
+			return errResult, nil
+		}
+		trimmed, err := trimTrips(body)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to reshape trips response: %v", err)), nil
+		}
+		return mcp.NewToolResultText(string(trimmed)), nil
 	}
 
 	return tool, handler
