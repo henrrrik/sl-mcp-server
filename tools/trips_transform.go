@@ -71,38 +71,48 @@ type trimmedJourney struct {
 }
 
 type trimmedLeg struct {
-	Mode      string `json:"mode"`
-	Line      string `json:"line,omitempty"`
-	Direction string `json:"direction,omitempty"`
-	From      string `json:"from,omitempty"`
-	To        string `json:"to,omitempty"`
-	Departure string `json:"departure,omitempty"`
-	Arrival   string `json:"arrival,omitempty"`
-	Duration  int    `json:"duration"`
-	Realtime  bool   `json:"realtime,omitempty"`
+	Mode       string         `json:"mode"`
+	Line       string         `json:"line,omitempty"`
+	Direction  string         `json:"direction,omitempty"`
+	From       string         `json:"from,omitempty"`
+	To         string         `json:"to,omitempty"`
+	Departure  string         `json:"departure,omitempty"`
+	Arrival    string         `json:"arrival,omitempty"`
+	Duration   int            `json:"duration"`
+	Realtime   bool           `json:"realtime,omitempty"`
+	Deviations []legDeviation `json:"deviations,omitempty"`
 }
 
-// trimTrips reshapes a raw upstream trips response into the trimmed form.
-// Returns the original bytes unchanged if the response has no journeys
-// (e.g. error-only responses from the upstream broker), so callers still
-// see systemMessages verbatim.
-func trimTrips(raw []byte) ([]byte, error) {
+// legDeviation is the per-leg summary of an active /v1/messages entry matching
+// the leg's line and mode.
+type legDeviation struct {
+	CaseID  int    `json:"case_id,omitempty"`
+	Header  string `json:"header,omitempty"`
+	Details string `json:"details,omitempty"`
+	From    string `json:"from,omitempty"`
+	Upto    string `json:"upto,omitempty"`
+}
+
+// reshapeTrips decodes a raw upstream /v2/trips response into the trimmed
+// form. Returns nil when the response has no journeys (error-only responses,
+// which the caller should pass through verbatim).
+func reshapeTrips(raw []byte) (*trimmedTrips, error) {
 	var up upstreamTrips
 	if err := json.Unmarshal(raw, &up); err != nil {
 		return nil, err
 	}
 	if len(up.Journeys) == 0 {
-		return raw, nil
+		return nil, nil
 	}
 
-	out := trimmedTrips{
+	out := &trimmedTrips{
 		Journeys:       make([]trimmedJourney, len(up.Journeys)),
 		SystemMessages: up.SystemMessages,
 	}
 	for i, j := range up.Journeys {
 		out.Journeys[i] = trimJourney(j)
 	}
-	return json.Marshal(out)
+	return out, nil
 }
 
 func trimJourney(j upstreamJourney) trimmedJourney {
@@ -270,6 +280,100 @@ type ambiguityBothResponse struct {
 }
 
 const maxCandidates = 5
+
+// modeToUpstreamTransport maps the trimmed-leg mode identifiers into the
+// transport_mode values that /v1/messages.scope.lines uses.
+func modeToUpstreamTransport(mode string) string {
+	switch mode {
+	case "bus":
+		return "BUS"
+	case "train":
+		return "TRAIN"
+	case "metro":
+		return "METRO"
+	case "tram":
+		return "TRAM"
+	case "ship":
+		return "SHIP"
+	default:
+		return ""
+	}
+}
+
+// upstreamDeviation mirrors the subset of /v1/messages fields we index and
+// surface. Everything else in the response is ignored.
+type upstreamDeviation struct {
+	DeviationCaseID int `json:"deviation_case_id"`
+	Scope           struct {
+		Lines []struct {
+			Designation   string `json:"designation"`
+			TransportMode string `json:"transport_mode"`
+		} `json:"lines"`
+	} `json:"scope"`
+	Publish struct {
+		From string `json:"from"`
+		Upto string `json:"upto"`
+	} `json:"publish"`
+	MessageVariants []struct {
+		Header   string `json:"header"`
+		Details  string `json:"details"`
+		Language string `json:"language"`
+	} `json:"message_variants"`
+}
+
+// indexDeviations groups upstream deviations by (line-designation, transport_mode).
+// A single deviation can appear under multiple keys if its scope spans several lines.
+func indexDeviations(raw []byte) (map[deviationKey][]legDeviation, error) {
+	var entries []upstreamDeviation
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, err
+	}
+	out := make(map[deviationKey][]legDeviation, len(entries))
+	for _, e := range entries {
+		ld := legDeviation{
+			CaseID: e.DeviationCaseID,
+			From:   e.Publish.From,
+			Upto:   e.Publish.Upto,
+		}
+		if len(e.MessageVariants) > 0 {
+			ld.Header = e.MessageVariants[0].Header
+			ld.Details = e.MessageVariants[0].Details
+		}
+		for _, line := range e.Scope.Lines {
+			if line.Designation == "" || line.TransportMode == "" {
+				continue
+			}
+			k := deviationKey{line: line.Designation, mode: line.TransportMode}
+			out[k] = append(out[k], ld)
+		}
+	}
+	return out, nil
+}
+
+type deviationKey struct {
+	line string
+	mode string // upstream TRAIN/BUS/METRO/TRAM/SHIP
+}
+
+// attachDeviations walks each leg and attaches any deviations from the index
+// whose (line, mode) matches. Walking legs and untyped legs are skipped.
+func attachDeviations(tt *trimmedTrips, index map[deviationKey][]legDeviation) {
+	for ji := range tt.Journeys {
+		for li := range tt.Journeys[ji].Legs {
+			leg := &tt.Journeys[ji].Legs[li]
+			if leg.Line == "" {
+				continue
+			}
+			mode := modeToUpstreamTransport(leg.Mode)
+			if mode == "" {
+				continue
+			}
+			if matches, ok := index[deviationKey{line: leg.Line, mode: mode}]; ok {
+				leg.Deviations = matches
+			}
+		}
+	}
+}
 
 // resolveCandidates fetches /v2/stop-finder for the given query and returns
 // up to maxCandidates of the most-relevant matches. Upstream orders results

@@ -93,8 +93,9 @@ func TestTripsTool(t *testing.T) {
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
-		"origin":      "Slussen",
-		"destination": "T-Centralen",
+		"origin":          "Slussen",
+		"destination":     "T-Centralen",
+		"skip_deviations": true,
 	}
 
 	result, err := handler(context.Background(), req)
@@ -133,6 +134,7 @@ func TestTripsTool_ClampsNumberOfTrips(t *testing.T) {
 		"origin":          "Slussen",
 		"destination":     "T-Centralen",
 		"number_of_trips": float64(100),
+		"skip_deviations": true,
 	}
 
 	_, err := handler(context.Background(), req)
@@ -154,9 +156,10 @@ func TestTripsTool_TimeParamDepart(t *testing.T) {
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
-		"origin":      "Slussen",
-		"destination": "T-Centralen",
-		"time":        "2026-04-22T09:00:00+02:00",
+		"origin":          "Slussen",
+		"destination":     "T-Centralen",
+		"time":            "2026-04-22T09:00:00+02:00",
+		"skip_deviations": true,
 	}
 
 	_, err := handler(context.Background(), req)
@@ -184,10 +187,11 @@ func TestTripsTool_TimeParamArrive(t *testing.T) {
 
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
-		"origin":      "Slussen",
-		"destination": "T-Centralen",
-		"time":        "2026-04-22T09:00:00+02:00",
-		"time_mode":   "arrive",
+		"origin":          "Slussen",
+		"destination":     "T-Centralen",
+		"time":            "2026-04-22T09:00:00+02:00",
+		"time_mode":       "arrive",
+		"skip_deviations": true,
 	}
 
 	_, err := handler(context.Background(), req)
@@ -210,9 +214,10 @@ func TestTripsTool_TimeConvertsToStockholmLocal(t *testing.T) {
 	// 07:00 UTC = 09:00 CEST (Stockholm, April — DST active)
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{
-		"origin":      "Slussen",
-		"destination": "T-Centralen",
-		"time":        "2026-04-22T07:00:00Z",
+		"origin":          "Slussen",
+		"destination":     "T-Centralen",
+		"time":            "2026-04-22T07:00:00Z",
+		"skip_deviations": true,
 	}
 
 	_, err := handler(context.Background(), req)
@@ -660,6 +665,184 @@ func TestTripsTool_WarningWithJourneysDoesNotIntercept(t *testing.T) {
 	}
 	if len(out.Journeys) == 0 {
 		t.Error("expected journeys to be preserved")
+	}
+}
+
+// deviationsBody builds a /v1/messages response with one deviation per
+// (line, mode) pair passed in.
+func deviationsBody(specs ...[2]string) string {
+	type dline struct {
+		Designation   string `json:"designation"`
+		ID            int    `json:"id"`
+		TransportMode string `json:"transport_mode"`
+	}
+	type scope struct {
+		Lines []dline `json:"lines"`
+	}
+	type variant struct {
+		Header   string `json:"header"`
+		Details  string `json:"details"`
+		Language string `json:"language"`
+	}
+	type dev struct {
+		DeviationCaseID int               `json:"deviation_case_id"`
+		Scope           scope             `json:"scope"`
+		Publish         map[string]string `json:"publish"`
+		MessageVariants []variant         `json:"message_variants"`
+	}
+	var out []dev
+	for i, s := range specs {
+		out = append(out, dev{
+			DeviationCaseID: 1000 + i,
+			Scope: scope{
+				Lines: []dline{{Designation: s[0], TransportMode: s[1]}},
+			},
+			Publish: map[string]string{
+				"from": "2026-04-20T00:00:00+02:00",
+				"upto": "2026-05-01T00:00:00+02:00",
+			},
+			MessageVariants: []variant{{
+				Header:   "Test deviation for " + s[1] + " " + s[0],
+				Details:  "Details for " + s[0],
+				Language: "sv",
+			}},
+		})
+	}
+	b, _ := json.Marshal(out)
+	return string(b)
+}
+
+func TestTripsTool_DeviationsAttachedToMatchingLegs(t *testing.T) {
+	tripsBody := loadTestData(t, "trips.json")
+	// Fixture legs: bus 179, walk, train 43. Publish deviations for both.
+	devs := deviationsBody([2]string{"179", "BUS"}, [2]string{"43", "TRAIN"})
+
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: tripsBody},
+		{pathContains: "/v1/messages", body: devs},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Vällingby", "destination": "Stockholm City"}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Journeys []struct {
+			Legs []struct {
+				Mode       string `json:"mode"`
+				Line       string `json:"line"`
+				Deviations []struct {
+					Header string `json:"header"`
+				} `json:"deviations"`
+			} `json:"legs"`
+		} `json:"journeys"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("failed to parse: %v\n%s", err, text)
+	}
+	legs := out.Journeys[0].Legs
+
+	// Bus 179 leg: should have one matching deviation.
+	if len(legs[0].Deviations) != 1 {
+		t.Errorf("leg[0] (bus 179): expected 1 deviation, got %d", len(legs[0].Deviations))
+	}
+	// Walk leg: should have none.
+	if len(legs[1].Deviations) != 0 {
+		t.Errorf("leg[1] (walk): expected 0 deviations, got %d", len(legs[1].Deviations))
+	}
+	// Train 43 leg: should have one matching deviation.
+	if len(legs[2].Deviations) != 1 {
+		t.Errorf("leg[2] (train 43): expected 1 deviation, got %d", len(legs[2].Deviations))
+	}
+}
+
+func TestTripsTool_DeviationsFilterByMode(t *testing.T) {
+	tripsBody := loadTestData(t, "trips.json")
+	// Publish deviation for BUS line 43 — must NOT attach to the train 43 leg.
+	devs := deviationsBody([2]string{"43", "BUS"})
+
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: tripsBody},
+		{pathContains: "/v1/messages", body: devs},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Vällingby", "destination": "Stockholm City"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Journeys []struct {
+			Legs []struct {
+				Line       string `json:"line"`
+				Deviations []any  `json:"deviations"`
+			} `json:"legs"`
+		} `json:"journeys"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	for _, leg := range out.Journeys[0].Legs {
+		if len(leg.Deviations) != 0 {
+			t.Errorf("no leg should have deviations (only BUS 43 published, no bus 43 in trip), got line=%q with %d", leg.Line, len(leg.Deviations))
+		}
+	}
+}
+
+func TestTripsTool_SkipDeviationsParamAvoidsSecondCall(t *testing.T) {
+	tripsBody := loadTestData(t, "trips.json")
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: tripsBody},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"origin":          "Vällingby",
+		"destination":     "Stockholm City",
+		"skip_deviations": true,
+	}
+
+	_, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for _, c := range mock.calls {
+		if strings.Contains(c.URL.Path, "/v1/messages") {
+			t.Errorf("/v1/messages should not have been called with skip_deviations=true")
+		}
+	}
+}
+
+func TestTripsTool_DeviationsFetchFailureNonFatal(t *testing.T) {
+	tripsBody := loadTestData(t, "trips.json")
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: tripsBody},
+		{pathContains: "/v1/messages", body: "upstream error", status: 500},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Vällingby", "destination": "Stockholm City"}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("trips call should not fail because deviations fetch did; got %s", result.Content[0].(mcp.TextContent).Text)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, "journeys") {
+		t.Errorf("expected trimmed journeys to still be returned; got %q", text)
 	}
 }
 

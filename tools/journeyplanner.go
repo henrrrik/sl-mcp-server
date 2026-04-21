@@ -65,6 +65,7 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 		mcp.WithString("time", mcp.Description("ISO 8601 departure/arrival time (e.g. 2026-04-22T09:00:00+02:00). Defaults to now.")),
 		mcp.WithString("time_mode", mcp.Description("'depart' or 'arrive' (default 'depart'). Only meaningful when 'time' is set.")),
 		mcp.WithBoolean("verbose", mcp.Description("Return the raw upstream response including coords, stopSequence, and footpath details. Default false.")),
+		mcp.WithBoolean("skip_deviations", mcp.Description("Skip the second /v1/messages call that attaches active deviations to each transit leg. Default false.")),
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -108,14 +109,45 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 			return resolveAmbiguity(ctx, client, origin, destination, originAmb, destAmb), nil
 		}
 
-		trimmed, err := trimTrips(body)
+		tt, err := reshapeTrips(body)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to reshape trips response: %v", err)), nil
 		}
-		return mcp.NewToolResultText(string(trimmed)), nil
+		if tt == nil {
+			// Error-only upstream response — pass through verbatim so
+			// callers still see systemMessages.
+			return mcp.NewToolResultText(string(body)), nil
+		}
+
+		if !request.GetBool("skip_deviations", false) {
+			enrichWithDeviations(ctx, client, tt)
+		}
+
+		out, err := json.Marshal(tt)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to encode trips response: %v", err)), nil
+		}
+		return mcp.NewToolResultText(string(out)), nil
 	}
 
 	return tool, handler
+}
+
+// enrichWithDeviations fetches active /v1/messages entries and attaches any
+// that match each transit leg's (line, mode). Failures are swallowed — the
+// trips response is still returned without deviations.
+func enrichWithDeviations(ctx context.Context, client slclient.HTTPDoer, tt *trimmedTrips) {
+	params := url.Values{"future": {"true"}}
+	u := slclient.BuildURL(deviationsBase, "/v1/messages", params)
+	body, errResult := fetchJSONRaw(ctx, client, u)
+	if errResult != nil {
+		return
+	}
+	index, err := indexDeviations(body)
+	if err != nil {
+		return
+	}
+	attachDeviations(tt, index)
 }
 
 // resolveAmbiguity fetches stop-finder candidates for the ambiguous sides in
