@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"time"
 
+	_ "time/tzdata" // embed tzdata so Europe/Stockholm resolves inside minimal containers
+
 	"github.com/henrrrik/sl-mcp-server/slclient"
 	"github.com/mark3labs/mcp-go/server"
 )

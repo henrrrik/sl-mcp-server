@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"time"
 
 	"github.com/henrrrik/sl-mcp-server/slclient"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -11,6 +12,9 @@ import (
 )
 
 const journeyPlannerBase = "https://journeyplanner.integration.sl.se"
+
+// SL's journey planner interprets itd_time as Europe/Stockholm local time.
+const stockholmTZ = "Europe/Stockholm"
 
 func SystemInfoTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("system_info",
@@ -56,6 +60,8 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 		mcp.WithString("origin", mcp.Required(), mcp.Description("Origin stop/location name")),
 		mcp.WithString("destination", mcp.Required(), mcp.Description("Destination stop/location name")),
 		mcp.WithNumber("number_of_trips", mcp.Description("Number of trips to return (1-3, default 3)")),
+		mcp.WithString("time", mcp.Description("ISO 8601 departure/arrival time (e.g. 2026-04-22T09:00:00+02:00). Defaults to now.")),
+		mcp.WithString("time_mode", mcp.Description("'depart' or 'arrive' (default 'depart'). Only meaningful when 'time' is set.")),
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -80,9 +86,58 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 			"calc_number_of_trips": {fmt.Sprintf("%d", numTrips)},
 		}
 
+		if errResult := applyTripTime(request, params); errResult != nil {
+			return errResult, nil
+		}
+
 		u := slclient.BuildURL(journeyPlannerBase, "/v2/trips", params)
 		return fetchJSON(ctx, client, u)
 	}
 
 	return tool, handler
+}
+
+// applyTripTime translates the public "time" / "time_mode" arguments into the
+// upstream's snake_case EFA parameters (itd_date, itd_time, itd_trip_date_time_dep_arr).
+// Returns a non-nil error result if the inputs are invalid; nil on success or if
+// no time was provided (leaving the broker to default to "now").
+func applyTripTime(request mcp.CallToolRequest, params url.Values) *mcp.CallToolResult {
+	timeStr := request.GetString("time", "")
+	modeStr := request.GetString("time_mode", "")
+
+	if timeStr == "" {
+		if modeStr != "" {
+			return mcp.NewToolResultError("time_mode requires 'time' to be set")
+		}
+		return nil
+	}
+
+	t, err := time.Parse(time.RFC3339, timeStr)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("invalid time %q: %v", timeStr, err))
+	}
+
+	loc, err := time.LoadLocation(stockholmTZ)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to load %s timezone: %v", stockholmTZ, err))
+	}
+	local := t.In(loc)
+
+	if modeStr == "" {
+		modeStr = "depart"
+	}
+	var depArr string
+	switch modeStr {
+	case "depart":
+		depArr = "dep"
+	case "arrive":
+		depArr = "arr"
+	default:
+		return mcp.NewToolResultError(fmt.Sprintf("time_mode must be 'depart' or 'arrive', got %q", modeStr))
+	}
+
+	params.Set("itd_date", local.Format("20060102"))
+	params.Set("itd_time", local.Format("1504"))
+	params.Set("itd_trip_date_time_dep_arr", depArr)
+	return nil
 }
