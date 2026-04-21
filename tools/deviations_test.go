@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -32,6 +33,56 @@ func newMockDoerWithStatus(body string, status int) *mockHTTPDoer {
 			Body:       io.NopCloser(strings.NewReader(body)),
 		},
 	}
+}
+
+// routedMock dispatches responses by path-substring and records every call.
+// Each Do() builds a fresh Response so the mock can handle multiple calls in
+// one test — needed by the trips ambiguity flow, which fetches /v2/trips and
+// then one or two /v2/stop-finder calls.
+type routedMock struct {
+	routes []mockRoute
+	mu     sync.Mutex
+	calls  []*http.Request
+}
+
+type mockRoute struct {
+	pathContains string
+	queryMatches map[string]string // optional: require these query params to match
+	body         string
+	status       int
+}
+
+func (m *routedMock) Do(req *http.Request) (*http.Response, error) {
+	m.mu.Lock()
+	m.calls = append(m.calls, req)
+	m.mu.Unlock()
+	for _, r := range m.routes {
+		if !strings.Contains(req.URL.Path, r.pathContains) {
+			continue
+		}
+		ok := true
+		for k, v := range r.queryMatches {
+			if req.URL.Query().Get(k) != v {
+				ok = false
+				break
+			}
+		}
+		if !ok {
+			continue
+		}
+		status := r.status
+		if status == 0 {
+			status = 200
+		}
+		return &http.Response{
+			StatusCode: status,
+			Body:       io.NopCloser(strings.NewReader(r.body)),
+		}, nil
+	}
+	return &http.Response{
+		StatusCode: 500,
+		Body:       io.NopCloser(strings.NewReader(`{"error":"no route in test mock for ` + req.URL.String() + `"}`)),
+	}, nil
 }
 
 func loadTestData(t *testing.T, name string) string {
