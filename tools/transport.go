@@ -72,12 +72,30 @@ func fetchJSONRaw(ctx context.Context, client slclient.HTTPDoer, rawURL string) 
 
 func SitesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("sites",
-		mcp.WithDescription("List SL transit sites (stations/stops) in Stockholm"),
+		mcp.WithDescription("List SL transit sites (stations/stops) in Stockholm. Pass a query to filter by name substring, and/or limit to cap the result size — the full list is ~6500 entries."),
+		mcp.WithString("query", mcp.Description("Filter sites by case-insensitive substring match on name.")),
+		mcp.WithNumber("limit", mcp.Description("Maximum number of sites to return. Omitted or 0 means no limit.")),
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		query := request.GetString("query", "")
+		limit := request.GetInt("limit", 0)
+
 		u := slclient.BuildURL(transportBase, "/v1/sites", nil)
-		return fetchJSON(ctx, client, u)
+
+		if query == "" && limit <= 0 {
+			return fetchJSON(ctx, client, u)
+		}
+
+		body, errResult := fetchJSONRaw(ctx, client, u)
+		if errResult != nil {
+			return errResult, nil
+		}
+		filtered, err := filterSites(body, query, limit)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to filter sites: %v", err)), nil
+		}
+		return mcp.NewToolResultText(string(filtered)), nil
 	}
 
 	return tool, handler

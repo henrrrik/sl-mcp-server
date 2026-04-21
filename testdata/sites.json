@@ -1,1 +1,8 @@
-[{"id": 9192, "name": "Slussen", "lat": 59.3186, "lon": 18.0716}]
+[
+  {"id": 9192, "name": "Slussen", "lat": 59.3186, "lon": 18.0716},
+  {"id": 9193, "name": "Slussplan", "lat": 59.3187, "lon": 18.0727},
+  {"id": 9001, "name": "T-Centralen", "lat": 59.3311, "lon": 18.0593},
+  {"id": 9103, "name": "Vällingby", "lat": 59.3633, "lon": 17.8731},
+  {"id": 7720, "name": "Aska", "note": "Södertälje", "lat": 59.2538, "lon": 17.4567},
+  {"id": 2427, "name": "Åsta", "note": "Vallentuna", "lat": 59.5358, "lon": 18.1450}
+]
