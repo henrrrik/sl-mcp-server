@@ -578,6 +578,151 @@ func TestTripsTool_AmbiguousDestinationReturnsCandidates(t *testing.T) {
 	}
 }
 
+func TestTripsTool_SingleCandidateAutoResolvesOrigin(t *testing.T) {
+	// Origin is ambiguous per upstream, but stop-finder returns only ONE
+	// candidate. The tool should silently use that candidate and retry
+	// rather than returning an error picker.
+	tripsErr := `{"systemMessages":[{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"}]}`
+	tripsOK := loadTestData(t, "trips.json")
+
+	mock := &routedMock{routes: []mockRoute{
+		// Ambiguous first call (no resolved ID in params)
+		{pathContains: "/v2/trips", queryMatches: map[string]string{"name_origin": "Tumultgränd"}, body: tripsErr},
+		// Retry with resolved id returns journeys
+		{pathContains: "/v2/trips", body: tripsOK},
+		{pathContains: "/v2/stop-finder", queryMatches: map[string]string{"name_sf": "Tumultgränd"},
+			body: stopFinderResponse("Tumultgränd")},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"origin":          "Tumultgränd",
+		"destination":     "T-Centralen",
+		"skip_deviations": true,
+	}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	if strings.Contains(text, "ambiguous_") {
+		t.Errorf("single-candidate resolution should not return an ambiguous_* error; got %.200s", text)
+	}
+	var out struct {
+		Journeys []json.RawMessage `json:"journeys"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("expected trimmed-journeys shape after retry, got parse error: %v", err)
+	}
+	if len(out.Journeys) == 0 {
+		t.Errorf("expected journeys after auto-resolve retry, got none")
+	}
+
+	// Verify the retried call used the resolved candidate ID
+	retried := false
+	for _, c := range mock.calls {
+		if strings.Contains(c.URL.Path, "/v2/trips") && strings.HasPrefix(c.URL.Query().Get("name_origin"), "909100100000") {
+			retried = true
+		}
+	}
+	if !retried {
+		t.Errorf("expected retry call to /v2/trips with a resolved global ID as name_origin")
+	}
+}
+
+func TestTripsTool_SingleCandidateAutoResolvesBoth(t *testing.T) {
+	tripsErr := `{"systemMessages":[
+		{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"},
+		{"type":"error","module":"BROKER","code":-8010,"text":"destination: "}
+	]}`
+	tripsOK := loadTestData(t, "trips.json")
+
+	mock := &routedMock{routes: []mockRoute{
+		// First call (both sides by name) — ambiguous
+		{pathContains: "/v2/trips", queryMatches: map[string]string{"name_origin": "Tumultgränd"}, body: tripsErr},
+		// Retry — both resolved to IDs, returns journeys
+		{pathContains: "/v2/trips", body: tripsOK},
+		{pathContains: "/v2/stop-finder", queryMatches: map[string]string{"name_sf": "Tumultgränd"},
+			body: stopFinderResponse("Tumultgränd")},
+		{pathContains: "/v2/stop-finder", queryMatches: map[string]string{"name_sf": "T-Cen"},
+			body: stopFinderResponse("T-Centralen")},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"origin":          "Tumultgränd",
+		"destination":     "T-Cen",
+		"skip_deviations": true,
+	}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	if strings.Contains(text, "ambiguous_") {
+		t.Errorf("should have auto-resolved both sides; got %.200s", text)
+	}
+	var out struct {
+		Journeys []json.RawMessage `json:"journeys"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("expected trimmed-journeys, got parse error: %v", err)
+	}
+	if len(out.Journeys) == 0 {
+		t.Errorf("expected journeys after auto-resolve")
+	}
+}
+
+func TestTripsTool_OriginMultiDestSingleOnlyOriginError(t *testing.T) {
+	// Origin has multiple candidates, destination has exactly one.
+	// Response should be ambiguous_origin alone — NOT ambiguous_both.
+	tripsErr := `{"systemMessages":[
+		{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"},
+		{"type":"error","module":"BROKER","code":-8010,"text":"destination: "}
+	]}`
+
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: tripsErr},
+		{pathContains: "/v2/stop-finder", queryMatches: map[string]string{"name_sf": "Tumultgränd"},
+			body: stopFinderResponse("Tumultgränd", "Tumultgränd 35", "Tumultgränd (skola)")},
+		{pathContains: "/v2/stop-finder", queryMatches: map[string]string{"name_sf": "T-Centralen"},
+			body: stopFinderResponse("T-Centralen")},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Tumultgränd", "destination": "T-Centralen"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Error      string            `json:"error"`
+		Query      string            `json:"query"`
+		Candidates []json.RawMessage `json:"candidates"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v\n%s", err, text)
+	}
+	if out.Error != "ambiguous_origin" {
+		t.Errorf("expected ambiguous_origin (destination was resolvable), got %q", out.Error)
+	}
+	if out.Query != "Tumultgränd" {
+		t.Errorf("expected query=Tumultgränd, got %q", out.Query)
+	}
+	if len(out.Candidates) < 2 {
+		t.Errorf("expected ≥2 candidates, got %d", len(out.Candidates))
+	}
+}
+
 func TestTripsTool_BothAmbiguousReturnsBothCandidates(t *testing.T) {
 	tripsErr := `{"systemMessages":[
 		{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"},

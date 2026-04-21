@@ -94,19 +94,14 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 			return errResult, nil
 		}
 
-		u := slclient.BuildURL(journeyPlannerBase, "/v2/trips", params)
-
 		if request.GetBool("verbose", false) {
+			u := slclient.BuildURL(journeyPlannerBase, "/v2/trips", params)
 			return fetchJSON(ctx, client, u)
 		}
 
-		body, errResult := fetchJSONRaw(ctx, client, u)
+		body, errResult := fetchTripsWithAmbiguityResolution(ctx, client, params, origin, destination)
 		if errResult != nil {
 			return errResult, nil
-		}
-
-		if originAmb, destAmb := detectAmbiguity(body); originAmb || destAmb {
-			return resolveAmbiguity(ctx, client, origin, destination, originAmb, destAmb), nil
 		}
 
 		tt, err := reshapeTrips(body)
@@ -150,52 +145,95 @@ func enrichWithDeviations(ctx context.Context, client slclient.HTTPDoer, tt *tri
 	attachDeviations(tt, index)
 }
 
-// resolveAmbiguity fetches stop-finder candidates for the ambiguous sides in
-// parallel and returns a structured error response. If stop-finder itself
-// fails, the corresponding candidate list is empty rather than failing the
-// whole call — callers still get to see which side was unresolvable.
-func resolveAmbiguity(ctx context.Context, client slclient.HTTPDoer, origin, destination string, originAmb, destAmb bool) *mcp.CallToolResult {
+// fetchTripsWithAmbiguityResolution fetches /v2/trips. When the broker reports
+// ambiguity, it calls stop-finder for each ambiguous side in parallel and:
+//   - if every ambiguous side resolves to exactly one candidate, silently
+//     re-fetches /v2/trips with those IDs and returns the resulting body;
+//   - otherwise, returns a structured error result naming only the side(s)
+//     that still require user disambiguation.
+func fetchTripsWithAmbiguityResolution(ctx context.Context, client slclient.HTTPDoer, params url.Values, origin, destination string) ([]byte, *mcp.CallToolResult) {
+	u := slclient.BuildURL(journeyPlannerBase, "/v2/trips", params)
+	body, errResult := fetchJSONRaw(ctx, client, u)
+	if errResult != nil {
+		return nil, errResult
+	}
+
+	originAmb, destAmb := detectAmbiguity(body)
+	if !originAmb && !destAmb {
+		return body, nil
+	}
+
+	oc, dc := fetchCandidatesInParallel(ctx, client, origin, destination, originAmb, destAmb)
+
+	// A side is still ambiguous to the caller if the broker flagged it AND
+	// we didn't land on exactly one candidate (either 0 = stop-finder failed
+	// or ≥2 = real ambiguity). Otherwise we can silently use the sole match.
+	originNeedsPicker := originAmb && len(oc) != 1
+	destNeedsPicker := destAmb && len(dc) != 1
+
+	if !originNeedsPicker && !destNeedsPicker {
+		if originAmb {
+			params.Set("name_origin", oc[0].ID)
+		}
+		if destAmb {
+			params.Set("name_destination", dc[0].ID)
+		}
+		u = slclient.BuildURL(journeyPlannerBase, "/v2/trips", params)
+		body, errResult = fetchJSONRaw(ctx, client, u)
+		if errResult != nil {
+			return nil, errResult
+		}
+		return body, nil
+	}
+
+	return nil, buildAmbiguityErrorResult(origin, destination, originNeedsPicker, destNeedsPicker, oc, dc)
+}
+
+// fetchCandidatesInParallel resolves stop-finder candidates for the ambiguous
+// sides concurrently. Non-ambiguous sides get a nil slice.
+func fetchCandidatesInParallel(ctx context.Context, client slclient.HTTPDoer, origin, destination string, originAmb, destAmb bool) ([]locationCandidate, []locationCandidate) {
 	var (
-		oc, dc     []locationCandidate
-		oErr, dErr error
-		wg         sync.WaitGroup
+		oc, dc []locationCandidate
+		wg     sync.WaitGroup
 	)
 	if originAmb {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			oc, oErr = resolveCandidates(ctx, client, origin)
+			oc, _ = resolveCandidates(ctx, client, origin)
 		}()
 	}
 	if destAmb {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			dc, dErr = resolveCandidates(ctx, client, destination)
+			dc, _ = resolveCandidates(ctx, client, destination)
 		}()
 	}
 	wg.Wait()
+	return oc, dc
+}
 
-	// Discard error detail — the structured response itself communicates the
-	// problem (empty candidates on a side implies stop-finder failed there).
-	_, _ = oErr, dErr
-
+// buildAmbiguityErrorResult produces the ambiguous_origin / ambiguous_destination
+// / ambiguous_both structured error based on which side(s) the caller still has
+// to disambiguate. Any side that's already been silently resolved is omitted.
+func buildAmbiguityErrorResult(origin, destination string, originNeedsPicker, destNeedsPicker bool, oc, dc []locationCandidate) *mcp.CallToolResult {
 	var body []byte
 	var err error
 	switch {
-	case originAmb && destAmb:
+	case originNeedsPicker && destNeedsPicker:
 		body, err = json.Marshal(ambiguityBothResponse{
 			Error:       "ambiguous_both",
 			Origin:      sideCandidates{Query: origin, Candidates: oc},
 			Destination: sideCandidates{Query: destination, Candidates: dc},
 		})
-	case originAmb:
+	case originNeedsPicker:
 		body, err = json.Marshal(ambiguitySingleResponse{
 			Error:      "ambiguous_origin",
 			Query:      origin,
 			Candidates: oc,
 		})
-	case destAmb:
+	case destNeedsPicker:
 		body, err = json.Marshal(ambiguitySingleResponse{
 			Error:      "ambiguous_destination",
 			Query:      destination,
