@@ -24,27 +24,38 @@ const maxResponseSize = 5 * 1024 * 1024 // 5MB
 const maxShortSiteID = 9999
 
 func fetchJSON(ctx context.Context, client slclient.HTTPDoer, rawURL string) (*mcp.CallToolResult, error) {
+	body, errResult := fetchJSONRaw(ctx, client, rawURL)
+	if errResult != nil {
+		return errResult, nil
+	}
+	return mcp.NewToolResultText(string(body)), nil
+}
+
+// fetchJSONRaw is fetchJSON without the final MCP-text wrapping. Returns the
+// raw response body on success, or a populated *mcp.CallToolResult describing
+// a transport or HTTP error. Exactly one of (body, errResult) is non-nil.
+func fetchJSONRaw(ctx context.Context, client slclient.HTTPDoer, rawURL string) ([]byte, *mcp.CallToolResult) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return nil, mcp.NewToolResultError(err.Error())
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return nil, mcp.NewToolResultError(err.Error())
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return mcp.NewToolResultError(fmt.Sprintf("SL API returned HTTP %d", resp.StatusCode)), nil
+		return nil, mcp.NewToolResultError(fmt.Sprintf("SL API returned HTTP %d", resp.StatusCode))
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
+		return nil, mcp.NewToolResultError(err.Error())
 	}
 
-	return mcp.NewToolResultText(string(body)), nil
+	return body, nil
 }
 
 func SitesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
