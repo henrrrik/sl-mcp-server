@@ -58,6 +58,76 @@ func TestDeparturesTool(t *testing.T) {
 	}
 }
 
+func TestDeparturesTool_StripsPrefixedID(t *testing.T) {
+	// 18009192 is the zero-padded "180" + shortId form returned by stop-finder;
+	// the departures endpoint only accepts the short id (9192).
+	body := loadTestData(t, "departures.json")
+	mock := newMockDoer(body)
+
+	_, handler := DeparturesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"site_id": float64(18009192),
+	}
+
+	_, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(mock.lastReq.URL.String(), "/v1/sites/9192/departures") {
+		t.Errorf("expected /v1/sites/9192/departures after normalizing 18009192, got %s", mock.lastReq.URL.String())
+	}
+}
+
+func TestDeparturesTool_StripsWishlistPrefixedID(t *testing.T) {
+	// 1809001 is the non-zero-padded form (180 + 9001) that a caller might
+	// construct by hand; accept it too.
+	body := loadTestData(t, "departures.json")
+	mock := newMockDoer(body)
+
+	_, handler := DeparturesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"site_id": float64(1809001),
+	}
+
+	_, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(mock.lastReq.URL.String(), "/v1/sites/9001/departures") {
+		t.Errorf("expected /v1/sites/9001/departures after normalizing 1809001, got %s", mock.lastReq.URL.String())
+	}
+}
+
+func TestDeparturesTool_PreservesLow180IDs(t *testing.T) {
+	// Real sites exist in the 1800-1809 range (e.g. 1809 = Söndagsvägen).
+	// These must pass through unchanged — normalization only applies to
+	// IDs outside the real short-id range (> 9999).
+	body := loadTestData(t, "departures.json")
+	mock := newMockDoer(body)
+
+	_, handler := DeparturesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"site_id": float64(1809),
+	}
+
+	_, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(mock.lastReq.URL.String(), "/v1/sites/1809/departures") {
+		t.Errorf("expected /v1/sites/1809/departures unchanged, got %s", mock.lastReq.URL.String())
+	}
+}
+
 func TestDeparturesTool_MissingSiteID(t *testing.T) {
 	mock := newMockDoer("{}")
 
