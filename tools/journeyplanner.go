@@ -2,8 +2,10 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
+	"sync"
 	"time"
 
 	"github.com/henrrrik/sl-mcp-server/slclient"
@@ -101,6 +103,11 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 		if errResult != nil {
 			return errResult, nil
 		}
+
+		if originAmb, destAmb := detectAmbiguity(body); originAmb || destAmb {
+			return resolveAmbiguity(ctx, client, origin, destination, originAmb, destAmb), nil
+		}
+
 		trimmed, err := trimTrips(body)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to reshape trips response: %v", err)), nil
@@ -109,6 +116,64 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	}
 
 	return tool, handler
+}
+
+// resolveAmbiguity fetches stop-finder candidates for the ambiguous sides in
+// parallel and returns a structured error response. If stop-finder itself
+// fails, the corresponding candidate list is empty rather than failing the
+// whole call — callers still get to see which side was unresolvable.
+func resolveAmbiguity(ctx context.Context, client slclient.HTTPDoer, origin, destination string, originAmb, destAmb bool) *mcp.CallToolResult {
+	var (
+		oc, dc     []locationCandidate
+		oErr, dErr error
+		wg         sync.WaitGroup
+	)
+	if originAmb {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			oc, oErr = resolveCandidates(ctx, client, origin)
+		}()
+	}
+	if destAmb {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			dc, dErr = resolveCandidates(ctx, client, destination)
+		}()
+	}
+	wg.Wait()
+
+	// Discard error detail — the structured response itself communicates the
+	// problem (empty candidates on a side implies stop-finder failed there).
+	_, _ = oErr, dErr
+
+	var body []byte
+	var err error
+	switch {
+	case originAmb && destAmb:
+		body, err = json.Marshal(ambiguityBothResponse{
+			Error:       "ambiguous_both",
+			Origin:      sideCandidates{Query: origin, Candidates: oc},
+			Destination: sideCandidates{Query: destination, Candidates: dc},
+		})
+	case originAmb:
+		body, err = json.Marshal(ambiguitySingleResponse{
+			Error:      "ambiguous_origin",
+			Query:      origin,
+			Candidates: oc,
+		})
+	case destAmb:
+		body, err = json.Marshal(ambiguitySingleResponse{
+			Error:      "ambiguous_destination",
+			Query:      destination,
+			Candidates: dc,
+		})
+	}
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to encode ambiguity response: %v", err))
+	}
+	return mcp.NewToolResultText(string(body))
 }
 
 // applyTripTime translates the public "time" / "time_mode" arguments into the

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -457,11 +458,217 @@ func TestTripsTool_VerboseReturnsRaw(t *testing.T) {
 	}
 }
 
-func TestTripsTool_ErrorResponsePassedThrough(t *testing.T) {
-	// When upstream returns only systemMessages (no journeys), pass through
-	// so callers see the error. Richer handling (candidates) comes later.
-	errBody := `{"systemMessages":[{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"}]}`
-	mock := newMockDoer(errBody)
+// stopFinderResponseFor builds a minimal stop-finder response with N candidates.
+func stopFinderResponse(names ...string) string {
+	type loc struct {
+		Coord            []float64         `json:"coord"`
+		DisassembledName string            `json:"disassembledName"`
+		ID               string            `json:"id"`
+		MatchQuality     int               `json:"matchQuality"`
+		Name             string            `json:"name"`
+		Parent           map[string]string `json:"parent"`
+		Type             string            `json:"type"`
+	}
+	type body struct {
+		Locations []loc `json:"locations"`
+	}
+	b := body{}
+	for i, n := range names {
+		b.Locations = append(b.Locations, loc{
+			Coord:            []float64{59.0 + float64(i)*0.01, 18.0 + float64(i)*0.01},
+			DisassembledName: n,
+			ID:               fmt.Sprintf("909100100000%04d", 9000+i),
+			MatchQuality:     1000 - i*10,
+			Name:             "Stockholm, " + n,
+			Parent:           map[string]string{"name": "Vällingby", "type": "locality"},
+			Type:             "stop",
+		})
+	}
+	out, _ := json.Marshal(b)
+	return string(out)
+}
+
+func TestTripsTool_AmbiguousOriginReturnsCandidates(t *testing.T) {
+	tripsErr := `{"systemMessages":[{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"}]}`
+
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: tripsErr},
+		{pathContains: "/v2/stop-finder", queryMatches: map[string]string{"name_sf": "Tumultgränd"},
+			body: stopFinderResponse("Tumultgränd", "Tumultgränd 35", "Tumultgränd (skola)")},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Tumultgränd", "destination": "T-Centralen"}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Error      string `json:"error"`
+		Query      string `json:"query"`
+		Candidates []struct {
+			Name     string `json:"name"`
+			Locality string `json:"locality"`
+			ID       string `json:"id"`
+			Type     string `json:"type"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("failed to parse response: %v\npayload: %s", err, text)
+	}
+	if out.Error != "ambiguous_origin" {
+		t.Errorf("expected error=ambiguous_origin, got %q", out.Error)
+	}
+	if out.Query != "Tumultgränd" {
+		t.Errorf("expected query=Tumultgränd, got %q", out.Query)
+	}
+	if len(out.Candidates) == 0 {
+		t.Fatalf("expected candidates, got none")
+	}
+	first := out.Candidates[0]
+	if first.Name == "" || first.ID == "" {
+		t.Errorf("expected populated name/id, got %+v", first)
+	}
+}
+
+func TestTripsTool_AmbiguousDestinationReturnsCandidates(t *testing.T) {
+	tripsErr := `{"systemMessages":[{"type":"error","module":"BROKER","code":-8011,"text":"destination: multiple matches"}]}`
+
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: tripsErr},
+		{pathContains: "/v2/stop-finder", queryMatches: map[string]string{"name_sf": "Gamla"},
+			body: stopFinderResponse("Gamla stan", "Gamla Enskede")},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Slussen", "destination": "Gamla"}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Error      string            `json:"error"`
+		Query      string            `json:"query"`
+		Candidates []json.RawMessage `json:"candidates"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("failed to parse response: %v\npayload: %s", err, text)
+	}
+	if out.Error != "ambiguous_destination" {
+		t.Errorf("expected error=ambiguous_destination, got %q", out.Error)
+	}
+	if out.Query != "Gamla" {
+		t.Errorf("expected query=Gamla, got %q", out.Query)
+	}
+	if len(out.Candidates) == 0 {
+		t.Error("expected candidates")
+	}
+}
+
+func TestTripsTool_BothAmbiguousReturnsBothCandidates(t *testing.T) {
+	tripsErr := `{"systemMessages":[
+		{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"},
+		{"type":"error","module":"BROKER","code":-8010,"text":"destination: "}
+	]}`
+
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: tripsErr},
+		{pathContains: "/v2/stop-finder", queryMatches: map[string]string{"name_sf": "Tumultgränd"},
+			body: stopFinderResponse("Tumultgränd", "Tumultgränd 35")},
+		{pathContains: "/v2/stop-finder", queryMatches: map[string]string{"name_sf": "Centrum"},
+			body: stopFinderResponse("Vällingby centrum", "Kista centrum", "Farsta centrum")},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Tumultgränd", "destination": "Centrum"}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Error  string `json:"error"`
+		Origin struct {
+			Query      string            `json:"query"`
+			Candidates []json.RawMessage `json:"candidates"`
+		} `json:"origin"`
+		Destination struct {
+			Query      string            `json:"query"`
+			Candidates []json.RawMessage `json:"candidates"`
+		} `json:"destination"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("failed to parse response: %v\npayload: %s", err, text)
+	}
+	if out.Error != "ambiguous_both" {
+		t.Errorf("expected error=ambiguous_both, got %q", out.Error)
+	}
+	if out.Origin.Query != "Tumultgränd" || len(out.Origin.Candidates) == 0 {
+		t.Errorf("origin candidates missing or wrong query: %+v", out.Origin)
+	}
+	if out.Destination.Query != "Centrum" || len(out.Destination.Candidates) == 0 {
+		t.Errorf("destination candidates missing or wrong query: %+v", out.Destination)
+	}
+}
+
+func TestTripsTool_WarningWithJourneysDoesNotIntercept(t *testing.T) {
+	// -8010 by itself (code for warning) with journeys present means the broker
+	// made a best-effort match. Don't intercept — trim normally.
+	body := loadTestData(t, "trips.json")
+	// Inject a -8010 warning into the fixture via simple string substitution
+	body = strings.Replace(body,
+		`"systemMessages": [
+
+  ]`,
+		`"systemMessages": [
+    {"type":"error","module":"BROKER","code":-8010,"text":"destination: "}
+  ]`, 1)
+
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: body},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Vällingby", "destination": "T-Centralen"}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if strings.Contains(text, "ambiguous_") {
+		t.Errorf("should not have intercepted — journeys were returned; got %.200s", text)
+	}
+
+	var out struct {
+		Journeys []json.RawMessage `json:"journeys"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("expected trimmed-journeys shape, got parse error: %v", err)
+	}
+	if len(out.Journeys) == 0 {
+		t.Error("expected journeys to be preserved")
+	}
+}
+
+func TestTripsTool_ErrorResponsePassedThroughWhenNoAmbiguityPattern(t *testing.T) {
+	// An error shape with neither -8011 nor journeys passes through untouched.
+	errBody := `{"systemMessages":[{"type":"error","module":"BROKER","code":-9999,"text":"something else"}]}`
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: errBody},
+	}}
 
 	_, handler := TripsTool(mock)
 	req := mcp.CallToolRequest{}
@@ -472,8 +679,8 @@ func TestTripsTool_ErrorResponsePassedThrough(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	text := result.Content[0].(mcp.TextContent).Text
-	if !strings.Contains(text, "multiple matches") {
-		t.Errorf("expected error text to pass through, got %q", text)
+	if !strings.Contains(text, "something else") {
+		t.Errorf("expected unknown-error body to pass through, got %q", text)
 	}
 }
 

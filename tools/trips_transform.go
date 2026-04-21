@@ -1,8 +1,13 @@
 package tools
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
+	"net/url"
 	"strings"
+
+	"github.com/henrrrik/sl-mcp-server/slclient"
 )
 
 // upstreamTrips mirrors the fields of the SL journey-planner /v2/trips
@@ -204,4 +209,117 @@ func summaryLabel(mode, line string) string {
 	default:
 		return mode + " " + line
 	}
+}
+
+// detectAmbiguity inspects a raw /v2/trips response and decides whether the
+// broker failed to resolve origin and/or destination. It only flags ambiguity
+// when the response carries no journeys — if journeys came back, the broker
+// made a best-effort match and callers don't need candidate pickers.
+func detectAmbiguity(raw []byte) (originAmbiguous, destinationAmbiguous bool) {
+	var u struct {
+		Journeys       []json.RawMessage `json:"journeys"`
+		SystemMessages []struct {
+			Code int    `json:"code"`
+			Text string `json:"text"`
+		} `json:"systemMessages"`
+	}
+	if err := json.Unmarshal(raw, &u); err != nil {
+		return false, false
+	}
+	if len(u.Journeys) > 0 {
+		return false, false
+	}
+	for _, m := range u.SystemMessages {
+		if m.Code != -8010 && m.Code != -8011 {
+			continue
+		}
+		if strings.HasPrefix(m.Text, "origin:") {
+			originAmbiguous = true
+		}
+		if strings.HasPrefix(m.Text, "destination:") {
+			destinationAmbiguous = true
+		}
+	}
+	return
+}
+
+// locationCandidate is the outward shape for a disambiguation suggestion.
+type locationCandidate struct {
+	Name     string    `json:"name"`
+	Locality string    `json:"locality,omitempty"`
+	ID       string    `json:"id"`
+	Type     string    `json:"type,omitempty"`
+	Coord    []float64 `json:"coord,omitempty"`
+}
+
+type ambiguitySingleResponse struct {
+	Error      string              `json:"error"`
+	Query      string              `json:"query"`
+	Candidates []locationCandidate `json:"candidates"`
+}
+
+type sideCandidates struct {
+	Query      string              `json:"query"`
+	Candidates []locationCandidate `json:"candidates"`
+}
+
+type ambiguityBothResponse struct {
+	Error       string         `json:"error"`
+	Origin      sideCandidates `json:"origin"`
+	Destination sideCandidates `json:"destination"`
+}
+
+const maxCandidates = 5
+
+// resolveCandidates fetches /v2/stop-finder for the given query and returns
+// up to maxCandidates of the most-relevant matches. Upstream orders results
+// by matchQuality, so we take the first N.
+func resolveCandidates(ctx context.Context, client slclient.HTTPDoer, query string) ([]locationCandidate, error) {
+	params := url.Values{
+		"name_sf":           {query},
+		"type_sf":           {"any"},
+		"any_obj_filter_sf": {"2"},
+	}
+	u := slclient.BuildURL(journeyPlannerBase, "/v2/stop-finder", params)
+	body, errResult := fetchJSONRaw(ctx, client, u)
+	if errResult != nil {
+		return nil, fmt.Errorf("stop-finder failed: %s", errResultText(errResult))
+	}
+
+	var sf struct {
+		Locations []struct {
+			Coord            []float64 `json:"coord"`
+			DisassembledName string    `json:"disassembledName"`
+			ID               string    `json:"id"`
+			Name             string    `json:"name"`
+			Parent           struct {
+				Name string `json:"name"`
+			} `json:"parent"`
+			Type string `json:"type"`
+		} `json:"locations"`
+	}
+	if err := json.Unmarshal(body, &sf); err != nil {
+		return nil, fmt.Errorf("stop-finder decode: %w", err)
+	}
+
+	n := len(sf.Locations)
+	if n > maxCandidates {
+		n = maxCandidates
+	}
+	out := make([]locationCandidate, n)
+	for i := 0; i < n; i++ {
+		loc := sf.Locations[i]
+		name := loc.DisassembledName
+		if name == "" {
+			name = loc.Name
+		}
+		out[i] = locationCandidate{
+			Name:     name,
+			Locality: loc.Parent.Name,
+			ID:       loc.ID,
+			Type:     loc.Type,
+			Coord:    loc.Coord,
+		}
+	}
+	return out, nil
 }

@@ -31,6 +31,18 @@ func fetchJSON(ctx context.Context, client slclient.HTTPDoer, rawURL string) (*m
 	return mcp.NewToolResultText(string(body)), nil
 }
 
+// errResultText extracts the first text content from an error *CallToolResult,
+// for log/error-message composition.
+func errResultText(r *mcp.CallToolResult) string {
+	if r == nil || len(r.Content) == 0 {
+		return ""
+	}
+	if tc, ok := r.Content[0].(mcp.TextContent); ok {
+		return tc.Text
+	}
+	return ""
+}
+
 // fetchJSONRaw is fetchJSON without the final MCP-text wrapping. Returns the
 // raw response body on success, or a populated *mcp.CallToolResult describing
 // a transport or HTTP error. Exactly one of (body, errResult) is non-nil.
