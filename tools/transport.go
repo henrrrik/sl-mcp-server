@@ -117,7 +117,16 @@ func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 		params := url.Values{}
 		path := fmt.Sprintf("/v1/sites/%d/departures", siteID)
 		u := slclient.BuildURL(transportBase, path, params)
-		return fetchJSON(ctx, client, u)
+
+		body, errResult := fetchJSONRaw(ctx, client, u)
+		if errResult != nil {
+			return errResult, nil
+		}
+		trimmed, err := trimDepartures(body)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to reshape departures response: %v", err)), nil
+		}
+		return mcp.NewToolResultText(string(trimmed)), nil
 	}
 
 	return tool, handler

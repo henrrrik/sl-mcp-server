@@ -184,8 +184,63 @@ func TestDeparturesTool(t *testing.T) {
 	}
 
 	text := result.Content[0].(mcp.TextContent).Text
-	if !strings.Contains(text, "Kungsträdgården") {
-		t.Error("result should contain fixture data")
+	if !strings.Contains(text, "Stockholm City") {
+		t.Error("result should contain fixture departure data")
+	}
+}
+
+func TestDeparturesTool_DropsNoisyStopPointsScope(t *testing.T) {
+	body := loadTestData(t, "departures.json")
+	mock := newMockDoer(body)
+
+	_, handler := DeparturesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": float64(9001)}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	// Fixture stop_deviation 1 has scope.stop_points with Slussen entries.
+	// After the transform these should be gone.
+	if strings.Contains(text, "stop_points") {
+		t.Errorf("stop_deviations should not carry scope.stop_points; response included it")
+	}
+	// Broken href values ("null/stop-points/..." etc) must be stripped.
+	if strings.Contains(text, `"null/`) || strings.Contains(text, "null/stop-points") {
+		t.Errorf(`scope entries should have "href" stripped; response still has a "null/..." value`)
+	}
+}
+
+func TestDeparturesTool_PreservesLineScope(t *testing.T) {
+	body := loadTestData(t, "departures.json")
+	mock := newMockDoer(body)
+
+	_, handler := DeparturesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": float64(9001)}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	// scope.lines should still be present — callers want to know which
+	// lines are affected, just not every platform in the network.
+	var out struct {
+		StopDeviations []struct {
+			Scope struct {
+				Lines []struct {
+					Designation   string `json:"designation"`
+					TransportMode string `json:"transport_mode"`
+				} `json:"lines"`
+			} `json:"scope"`
+		} `json:"stop_deviations"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if len(out.StopDeviations) == 0 || len(out.StopDeviations[0].Scope.Lines) == 0 {
+		t.Errorf("expected scope.lines to survive the transform, got %+v", out.StopDeviations)
 	}
 }
 
