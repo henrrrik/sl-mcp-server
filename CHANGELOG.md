@@ -51,6 +51,17 @@
   helper shared with the `trips` ambiguity-resolver, so both tools
   agree on what counts as a stop.
 
+### departures
+
+- `line` filter is now a prefix match, case-insensitive. `"43"` matches
+  both pendeltåg 43 and 43X; `"54"` matches the whole 54x bus family.
+  Previous behavior was exact match, which required callers to know the
+  full designation upfront.
+- Default `limit` is now 20 (was unlimited). Pass `limit=0` for the full
+  upstream page (typically 35). This trims the typical "when's my next X"
+  response by ~40% and keeps compound filters (e.g. line="43" + limit=3)
+  working unchanged.
+
 ### nearest_stops (new tool)
 
 - `nearest_stops(lat, lon, radius_m=500, limit=5)` returns SL sites

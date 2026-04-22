@@ -117,7 +117,9 @@ func departureMatches(dep map[string]any, f departuresFilters) bool {
 	}
 	if f.line != "" {
 		designation, _ := line["designation"].(string)
-		if !strings.EqualFold(designation, f.line) {
+		// Prefix match so "43" includes pendeltåg 43 AND 43X, and "54"
+		// includes the 54x bus family. Case-insensitive on both sides.
+		if !strings.HasPrefix(strings.ToLower(designation), strings.ToLower(f.line)) {
 			return false
 		}
 	}
