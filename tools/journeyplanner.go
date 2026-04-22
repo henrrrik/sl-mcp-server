@@ -33,8 +33,8 @@ func SystemInfoTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 
 func StopFinderTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("stop_finder",
-		mcp.WithDescription("Find SL stops/stations by name"),
-		mcp.WithString("name", mcp.Required(), mcp.Description("Stop name to search for")),
+		mcp.WithDescription("Fuzzy, ranked search for SL stops/stations/addresses by name. Tolerates typos and partial names and returns candidates ordered by match quality — intended for resolving free-form user input before calling trips. For enumerating the canonical site catalog or looking up a numeric site_id for departures, use sites instead."),
+		mcp.WithString("name", mcp.Required(), mcp.Description("Free-form name or partial name to search for. Fuzzy matching is applied.")),
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

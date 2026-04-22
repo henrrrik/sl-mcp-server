@@ -72,8 +72,8 @@ func fetchJSONRaw(ctx context.Context, client slclient.HTTPDoer, rawURL string) 
 
 func SitesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("sites",
-		mcp.WithDescription("List SL transit sites (stations/stops) in Stockholm. Pass a query to filter by name substring, and/or limit to cap the result size — the full list is ~6500 entries."),
-		mcp.WithString("query", mcp.Description("Filter sites by case-insensitive substring match on name.")),
+		mcp.WithDescription("Enumerate SL's catalog of transit sites (stations/stops) and their canonical numeric site_ids. Use this to look up the site_id for tools like departures. Matching is exact substring only — for typo-tolerant or ranked name search, use stop_finder instead. The full list is ~6500 entries; combine query and limit to narrow the result."),
+		mcp.WithString("query", mcp.Description("Case-insensitive substring match on site name. Exact substrings only — no fuzzy matching.")),
 		mcp.WithNumber("limit", mcp.Description("Maximum number of sites to return. Omitted or 0 means no limit.")),
 	)
 
@@ -166,10 +166,13 @@ func normalizeSiteID(id int) int {
 func LinesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("lines",
 		mcp.WithDescription("List SL transit lines"),
+		mcp.WithNumber("transport_authority_id", mcp.Description("Transport authority ID from the transport_authorities tool. Defaults to 1 (Storstockholms Lokaltrafik).")),
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		u := slclient.BuildURL(transportBase, "/v1/lines", nil)
+		authorityID := request.GetInt("transport_authority_id", 1)
+		params := url.Values{"transport_authority_id": {fmt.Sprintf("%d", authorityID)}}
+		u := slclient.BuildURL(transportBase, "/v1/lines", params)
 		return fetchJSON(ctx, client, u)
 	}
 
