@@ -34,11 +34,30 @@ type upstreamLeg struct {
 }
 
 type upstreamStopEvent struct {
-	Name                   string `json:"name"`
-	DepartureTimePlanned   string `json:"departureTimePlanned"`
-	DepartureTimeEstimated string `json:"departureTimeEstimated"`
-	ArrivalTimePlanned     string `json:"arrivalTimePlanned"`
-	ArrivalTimeEstimated   string `json:"arrivalTimeEstimated"`
+	ID                     string              `json:"id"`
+	Name                   string              `json:"name"`
+	Type                   string              `json:"type"`
+	Coord                  []float64           `json:"coord"`
+	Parent                 *upstreamStopParent `json:"parent,omitempty"`
+	DepartureTimePlanned   string              `json:"departureTimePlanned"`
+	DepartureTimeEstimated string              `json:"departureTimeEstimated"`
+	ArrivalTimePlanned     string              `json:"arrivalTimePlanned"`
+	ArrivalTimeEstimated   string              `json:"arrivalTimeEstimated"`
+}
+
+// upstreamStopParent is the enclosing stop for a platform-level stop event.
+// Only the subset of fields used for the resolved-echo and stop-type guard
+// is decoded — everything else on the upstream struct is ignored.
+type upstreamStopParent struct {
+	ID         string                 `json:"id"`
+	Name       string                 `json:"name"`
+	Type       string                 `json:"type"`
+	Coord      []float64              `json:"coord"`
+	Properties upstreamStopProperties `json:"properties"`
+}
+
+type upstreamStopProperties struct {
+	StopID string `json:"stopId"`
 }
 
 type upstreamTransportation struct {
@@ -60,6 +79,36 @@ type upstreamTransportDest struct {
 type trimmedTrips struct {
 	Journeys       []trimmedJourney  `json:"journeys"`
 	SystemMessages []json.RawMessage `json:"systemMessages,omitempty"`
+	Resolved       *resolvedTrip     `json:"resolved,omitempty"`
+	Warnings       []tripWarning     `json:"warnings,omitempty"`
+}
+
+// tripWarning surfaces non-fatal disambiguation notices — e.g. an exact-name
+// match was picked over close-but-lower-quality shadows. The caller can
+// still inspect the shadowed candidates and retry with a different name
+// or an explicit id.
+type tripWarning struct {
+	Code     string              `json:"code"`
+	Side     string              `json:"side,omitempty"`
+	Query    string              `json:"query,omitempty"`
+	Picked   *locationCandidate  `json:"picked,omitempty"`
+	Shadowed []locationCandidate `json:"shadowed,omitempty"`
+}
+
+// resolvedTrip echoes the actual origin/destination the planner used, so
+// callers can detect silent drift when fuzzy name matching produced a
+// different location than they expected.
+type resolvedTrip struct {
+	Origin      resolvedLocation `json:"origin"`
+	Destination resolvedLocation `json:"destination"`
+}
+
+type resolvedLocation struct {
+	Name   string    `json:"name,omitempty"`
+	ID     string    `json:"id,omitempty"`      // 16-digit GID when the upstream supplied one.
+	SiteID int       `json:"site_id,omitempty"` // short form, when derivable.
+	Type   string    `json:"type,omitempty"`    // stop / platform / poi / address / locality.
+	Coord  []float64 `json:"coord,omitempty"`
 }
 
 type trimmedJourney struct {
@@ -321,11 +370,12 @@ func detectAmbiguity(raw []byte) (originAmbiguous, destinationAmbiguous bool) {
 
 // locationCandidate is the outward shape for a disambiguation suggestion.
 type locationCandidate struct {
-	Name     string    `json:"name"`
-	Locality string    `json:"locality,omitempty"`
-	ID       string    `json:"id"`
-	Type     string    `json:"type,omitempty"`
-	Coord    []float64 `json:"coord,omitempty"`
+	Name         string    `json:"name"`
+	Locality     string    `json:"locality,omitempty"`
+	ID           string    `json:"id"`
+	Type         string    `json:"type,omitempty"`
+	Coord        []float64 `json:"coord,omitempty"`
+	MatchQuality int       `json:"match_quality,omitempty"`
 }
 
 type ambiguitySingleResponse struct {
@@ -487,6 +537,80 @@ func deviationActiveAt(d legDeviation, at time.Time) bool {
 	return !at.Before(from) && !at.After(upto)
 }
 
+// extractResolved derives the resolved-origin / resolved-destination block
+// from a raw /v2/trips response. Returns nil on malformed JSON or on
+// error-only responses (no journeys), so the caller can omit the field.
+//
+// When a leg endpoint is a platform with a stop parent, the stop's name and
+// id are surfaced (that's the useful disambiguation level for callers); the
+// platform coord stays because platforms are more geographically precise.
+func extractResolved(body []byte) *resolvedTrip {
+	origin, dest, ok := firstLegEndpoints(body)
+	if !ok {
+		return nil
+	}
+	return &resolvedTrip{
+		Origin:      resolvedFromStopEvent(origin),
+		Destination: resolvedFromStopEvent(dest),
+	}
+}
+
+// resolvedFromStopEvent synthesizes the echo-able shape from an upstream
+// stop event. Uses the parent's stop identity when present (that's the
+// "station" a human recognizes, not the platform), and falls back to the
+// stop event itself otherwise.
+func resolvedFromStopEvent(e upstreamStopEvent) resolvedLocation {
+	out := resolvedLocation{
+		Name:  e.Name,
+		ID:    e.ID,
+		Type:  e.Type,
+		Coord: e.Coord,
+	}
+	if e.Parent != nil && e.Parent.Type == "stop" {
+		out.Name = e.Parent.Name
+		out.ID = e.Parent.ID
+		out.Type = e.Parent.Type
+		// Prefer the platform coord (more precise) but fall back to parent.
+		if len(out.Coord) == 0 && len(e.Parent.Coord) >= 2 {
+			out.Coord = e.Parent.Coord
+		}
+	}
+	// Derive the short site id from whichever id we have. Try the parent's
+	// 8-digit stopId first (clean short form); fall back to GID normalization.
+	if e.Parent != nil && e.Parent.Properties.StopID != "" {
+		if short, err := normalizeSiteID(e.Parent.Properties.StopID); err == nil {
+			out.SiteID = short
+		}
+	}
+	if out.SiteID == 0 && out.ID != "" {
+		if short, err := normalizeSiteID(out.ID); err == nil {
+			out.SiteID = short
+		}
+	}
+	return out
+}
+
+// injectVerboseResolved decodes the raw /v2/trips body, injects the resolved
+// echo block at top-level, and re-marshals. Used by verbose=true so callers
+// still see the resolved section even when the rest of the payload is
+// passed through untrimmed.
+func injectVerboseResolved(body []byte) ([]byte, error) {
+	resolved := extractResolved(body)
+	if resolved == nil {
+		return body, nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, err
+	}
+	r, err := json.Marshal(resolved)
+	if err != nil {
+		return nil, err
+	}
+	raw["resolved"] = r
+	return json.Marshal(raw)
+}
+
 // resolveCandidates fetches /v2/stop-finder for the given query and returns
 // up to maxCandidates of the most-relevant matches. Upstream orders results
 // by matchQuality, so we take the first N.
@@ -507,6 +631,7 @@ func resolveCandidates(ctx context.Context, client slclient.HTTPDoer, query stri
 			Coord            []float64 `json:"coord"`
 			DisassembledName string    `json:"disassembledName"`
 			ID               string    `json:"id"`
+			MatchQuality     int       `json:"matchQuality"`
 			Name             string    `json:"name"`
 			Parent           struct {
 				Name string `json:"name"`
@@ -530,12 +655,64 @@ func resolveCandidates(ctx context.Context, client slclient.HTTPDoer, query stri
 			name = loc.Name
 		}
 		out[i] = locationCandidate{
-			Name:     name,
-			Locality: loc.Parent.Name,
-			ID:       loc.ID,
-			Type:     loc.Type,
-			Coord:    loc.Coord,
+			Name:         name,
+			Locality:     loc.Parent.Name,
+			ID:           loc.ID,
+			Type:         loc.Type,
+			Coord:        loc.Coord,
+			MatchQuality: loc.MatchQuality,
 		}
 	}
 	return out, nil
+}
+
+// Exact-match short-circuit thresholds. Upstream tags an exact stop-name
+// hit as matchQuality 1000; shadowing candidates typically score 700–900.
+// We require at least a 100-point gap between the exact match and the
+// next-best candidate before auto-picking, so "Slussen" wins over the
+// 850-quality "Slussplan" but a pair tied at 1000 still errors as
+// ambiguous (which shouldn't happen in practice — upstream would have
+// returned journeys for the first).
+const (
+	exactMatchQualityMin = 1000
+	exactMatchQualityGap = 100
+)
+
+// pickExactMatch returns the single candidate that qualifies as an exact
+// name match (match_quality >= exactMatchQualityMin and strictly higher
+// than every other candidate by at least exactMatchQualityGap). Returns
+// (nil, _, false) when no candidate qualifies.
+//
+// The second return value is the remaining candidates — what would have
+// been offered as an ambiguity picker — so callers can attach them as a
+// "shadowed" warning on the successful response.
+func pickExactMatch(cands []locationCandidate) (*locationCandidate, []locationCandidate, bool) {
+	if len(cands) < 2 {
+		return nil, nil, false
+	}
+	var bestIdx = -1
+	var bestQ, secondQ int
+	for i, c := range cands {
+		if c.MatchQuality > bestQ {
+			secondQ = bestQ
+			bestQ = c.MatchQuality
+			bestIdx = i
+			continue
+		}
+		if c.MatchQuality > secondQ {
+			secondQ = c.MatchQuality
+		}
+	}
+	if bestIdx < 0 || bestQ < exactMatchQualityMin || bestQ-secondQ < exactMatchQualityGap {
+		return nil, nil, false
+	}
+	winner := cands[bestIdx]
+	shadowed := make([]locationCandidate, 0, len(cands)-1)
+	for i, c := range cands {
+		if i == bestIdx {
+			continue
+		}
+		shadowed = append(shadowed, c)
+	}
+	return &winner, shadowed, true
 }

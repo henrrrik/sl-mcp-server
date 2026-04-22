@@ -3,8 +3,10 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -66,9 +68,11 @@ func StopFinderTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 
 func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("trips",
-		mcp.WithDescription("Plan a trip between two locations in Stockholm. Returns a trimmed, LLM-friendly summary by default; set verbose=true for the full upstream payload."),
-		mcp.WithString("origin", mcp.Required(), mcp.Description("Origin stop/location name")),
-		mcp.WithString("destination", mcp.Required(), mcp.Description("Destination stop/location name")),
+		mcp.WithDescription("Plan a trip between two locations in Stockholm. Prefer origin_id and destination_id over origin and destination when you already have a stop's id (from the sites, stop_finder, or resolve tools) — they skip name resolution and eliminate fuzzy-match drift onto POIs or addresses. Returns a trimmed, LLM-friendly summary by default; set verbose=true for the full upstream payload. Every successful response echoes a resolved block with the actual origin/destination the planner used so callers can detect silent drift."),
+		mcp.WithString("origin", mcp.Description("Origin stop/location name. Exactly one of 'origin' or 'origin_id' must be provided. Free-form name matching; prefer origin_id when available.")),
+		mcp.WithString("destination", mcp.Description("Destination stop/location name. Exactly one of 'destination' or 'destination_id' must be provided. Free-form name matching; prefer destination_id when available.")),
+		mcp.WithString("origin_id", mcp.Description("Origin site id. Accepts the short form (e.g. \"9702\"), the 8-digit 18xx form, the 9-digit 3BA1CDEFG form, or the 16-digit GID. Skips fuzzy name resolution and prevents silent drift onto POIs/addresses. Pass as a string — 16-digit GIDs exceed JS Number.MAX_SAFE_INTEGER.")),
+		mcp.WithString("destination_id", mcp.Description("Destination site id. Same format rules as origin_id.")),
 		mcp.WithNumber("number_of_trips", mcp.Description("Number of trips to return (1-3, default 3)")),
 		mcp.WithString("time", mcp.Description("ISO 8601 departure/arrival time (e.g. 2026-04-22T09:00:00+02:00). Defaults to now.")),
 		mcp.WithString("time_mode", mcp.Description("'depart' or 'arrive' (default 'depart'). Only meaningful when 'time' is set.")),
@@ -77,11 +81,22 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		origin := request.GetString("origin", "")
-		destination := request.GetString("destination", "")
-		if origin == "" || destination == "" {
-			return mcp.NewToolResultError("origin and destination are required"), nil
+		origin := strings.TrimSpace(request.GetString("origin", ""))
+		destination := strings.TrimSpace(request.GetString("destination", ""))
+		originIDArg := coerceSiteIDArg(request.GetArguments()["origin_id"])
+		destinationIDArg := coerceSiteIDArg(request.GetArguments()["destination_id"])
+
+		originParam, errResult := resolveTripSideParam("origin", origin, originIDArg)
+		if errResult != nil {
+			return errResult, nil
 		}
+		destParam, errResult := resolveTripSideParam("destination", destination, destinationIDArg)
+		if errResult != nil {
+			return errResult, nil
+		}
+
+		originProvidedAsName := origin != ""
+		destProvidedAsName := destination != ""
 
 		numTrips := request.GetInt("number_of_trips", 3)
 		if numTrips < 1 {
@@ -92,9 +107,9 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 
 		params := url.Values{
 			"type_origin":          {"any"},
-			"name_origin":          {origin},
+			"name_origin":          {originParam},
 			"type_destination":     {"any"},
-			"name_destination":     {destination},
+			"name_destination":     {destParam},
 			"calc_number_of_trips": {fmt.Sprintf("%d", numTrips)},
 		}
 
@@ -103,11 +118,10 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 		}
 
 		if request.GetBool("verbose", false) {
-			u := slclient.BuildURL(journeyPlannerBase, "/v2/trips", params)
-			return fetchJSON(ctx, client, u)
+			return fetchVerboseTrips(ctx, client, params)
 		}
 
-		body, errResult := fetchTripsWithAmbiguityResolution(ctx, client, params, origin, destination)
+		body, warnings, errResult := fetchTripsWithAmbiguityResolution(ctx, client, params, origin, destination, originProvidedAsName, destProvidedAsName)
 		if errResult != nil {
 			return errResult, nil
 		}
@@ -122,6 +136,9 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 			return mcp.NewToolResultText(string(body)), nil
 		}
 
+		tt.Resolved = extractResolved(body)
+		tt.Warnings = warnings
+
 		if !request.GetBool("skip_deviations", false) {
 			enrichWithDeviations(ctx, client, tt)
 		}
@@ -134,6 +151,47 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	}
 
 	return tool, handler
+}
+
+// fetchVerboseTrips returns the raw upstream /v2/trips body with only the
+// resolved echo block injected, leaving every other upstream field (coords,
+// stopSequence, footpath details) in place.
+func fetchVerboseTrips(ctx context.Context, client slclient.HTTPDoer, params url.Values) (*mcp.CallToolResult, error) {
+	u := slclient.BuildURL(journeyPlannerBase, "/v2/trips", params)
+	body, errResult := fetchJSONRaw(ctx, client, u)
+	if errResult != nil {
+		return errResult, nil
+	}
+	out, err := injectVerboseResolved(body)
+	if err != nil {
+		return mcp.NewToolResultText(string(body)), nil
+	}
+	return mcp.NewToolResultText(string(out)), nil
+}
+
+// resolveTripSideParam enforces exactly-one-of (name, id) and returns the
+// value to feed into the upstream's name_origin / name_destination field.
+// Name is passed verbatim (upstream fuzzy-matches). IDs are normalized to
+// the 16-digit GID form the upstream also accepts.
+func resolveTripSideParam(side, name, idArg string) (string, *mcp.CallToolResult) {
+	if name == "" && idArg == "" {
+		return "", mcp.NewToolResultError(fmt.Sprintf("exactly one of %q or %q_id must be set", side, side))
+	}
+	if name != "" && idArg != "" {
+		return "", mcp.NewToolResultError(fmt.Sprintf("%q and %q_id are mutually exclusive", side, side))
+	}
+	if idArg == "" {
+		return name, nil
+	}
+	gid, err := normalizeToGID(idArg)
+	if err != nil {
+		var se *siteIDError
+		if errors.As(err, &se) {
+			return "", mcp.NewToolResultError(se.asJSON())
+		}
+		return "", mcp.NewToolResultError(err.Error())
+	}
+	return gid, nil
 }
 
 // enrichWithDeviations fetches active /v1/messages entries and attaches any
@@ -155,46 +213,237 @@ func enrichWithDeviations(ctx context.Context, client slclient.HTTPDoer, tt *tri
 
 // fetchTripsWithAmbiguityResolution fetches /v2/trips. When the broker reports
 // ambiguity, it calls stop-finder for each ambiguous side in parallel and:
-//   - if every ambiguous side resolves to exactly one candidate, silently
-//     re-fetches /v2/trips with those IDs and returns the resulting body;
+//   - if every ambiguous side resolves to exactly one stop candidate (or an
+//     exact-match short-circuit wins), silently re-fetches /v2/trips with
+//     those IDs and returns the resulting body;
+//   - if all resolved candidates on a side are non-stops (POIs, addresses,
+//     localities), returns origin_not_a_stop / destination_not_a_stop so the
+//     caller can't silently plan from the wrong place;
 //   - otherwise, returns a structured error result naming only the side(s)
 //     that still require user disambiguation.
-func fetchTripsWithAmbiguityResolution(ctx context.Context, client slclient.HTTPDoer, params url.Values, origin, destination string) ([]byte, *mcp.CallToolResult) {
+//
+// originByName / destByName indicate whether the side was supplied by name
+// (and thus subject to the fuzzy-match drift guard) or by id. Warnings
+// collected during ambiguity resolution (e.g. exact-match shadowing) are
+// returned alongside the body for the caller to attach.
+func fetchTripsWithAmbiguityResolution(ctx context.Context, client slclient.HTTPDoer, params url.Values, origin, destination string, originByName, destByName bool) ([]byte, []tripWarning, *mcp.CallToolResult) {
 	u := slclient.BuildURL(journeyPlannerBase, "/v2/trips", params)
 	body, errResult := fetchJSONRaw(ctx, client, u)
 	if errResult != nil {
-		return nil, errResult
+		return nil, nil, errResult
 	}
 
-	originAmb, destAmb := detectAmbiguity(body)
+	// Defensive POI guard: even when upstream returned journeys, fuzzy name
+	// matching may have quietly resolved the origin/destination onto a POI
+	// or address (e.g. "Järfälla kyrka" → "Järfälla Hyrkart").
+	if errResult := rejectPoiResolutionIfNeeded(body, originByName, destByName); errResult != nil {
+		return nil, nil, errResult
+	}
+
+	originAmb, destAmb := ambiguousByNameSide(body, originByName, destByName)
 	if !originAmb && !destAmb {
-		return body, nil
+		return body, nil, nil
 	}
+	return resolveAmbiguity(ctx, client, params, origin, destination, originAmb, destAmb)
+}
 
+// ambiguousByNameSide returns the broker's ambiguity flags, with id-provided
+// sides forced to false: the upstream shouldn't flag an id-provided side,
+// but if it does we skip stop-finder rather than resolving a name we don't
+// have.
+func ambiguousByNameSide(body []byte, originByName, destByName bool) (originAmb, destAmb bool) {
+	originAmb, destAmb = detectAmbiguity(body)
+	if !originByName {
+		originAmb = false
+	}
+	if !destByName {
+		destAmb = false
+	}
+	return
+}
+
+// resolveAmbiguity handles the stop-finder-and-retry path once we know at
+// least one side is ambiguous. It either returns the retried /v2/trips body
+// on successful auto-resolve (with any exact-match shadowing warnings), a
+// not-a-stop error for POI-only candidates, or a picker error listing the
+// remaining stop candidates.
+func resolveAmbiguity(ctx context.Context, client slclient.HTTPDoer, params url.Values, origin, destination string, originAmb, destAmb bool) ([]byte, []tripWarning, *mcp.CallToolResult) {
 	oc, dc := fetchCandidatesInParallel(ctx, client, origin, destination, originAmb, destAmb)
+	ocStops, ocAll := splitStopCandidates(oc)
+	dcStops, dcAll := splitStopCandidates(dc)
 
-	// A side is still ambiguous to the caller if the broker flagged it AND
-	// we didn't land on exactly one candidate (either 0 = stop-finder failed
-	// or ≥2 = real ambiguity). Otherwise we can silently use the sole match.
-	originNeedsPicker := originAmb && len(oc) != 1
-	destNeedsPicker := destAmb && len(dc) != 1
-
-	if !originNeedsPicker && !destNeedsPicker {
-		if originAmb {
-			params.Set("name_origin", oc[0].ID)
-		}
-		if destAmb {
-			params.Set("name_destination", dc[0].ID)
-		}
-		u = slclient.BuildURL(journeyPlannerBase, "/v2/trips", params)
-		body, errResult = fetchJSONRaw(ctx, client, u)
-		if errResult != nil {
-			return nil, errResult
-		}
-		return body, nil
+	if originAmb && len(ocStops) == 0 && len(ocAll) > 0 {
+		return nil, nil, buildNotAStopResult("origin_not_a_stop", origin, ocAll)
+	}
+	if destAmb && len(dcStops) == 0 && len(dcAll) > 0 {
+		return nil, nil, buildNotAStopResult("destination_not_a_stop", destination, dcAll)
 	}
 
-	return nil, buildAmbiguityErrorResult(origin, destination, originNeedsPicker, destNeedsPicker, oc, dc)
+	var warnings []tripWarning
+	ocPicked, ocWarn, ocOK := resolveSide("origin", origin, originAmb, ocStops)
+	if ocWarn != nil {
+		warnings = append(warnings, *ocWarn)
+	}
+	dcPicked, dcWarn, dcOK := resolveSide("destination", destination, destAmb, dcStops)
+	if dcWarn != nil {
+		warnings = append(warnings, *dcWarn)
+	}
+
+	originNeedsPicker := originAmb && !ocOK
+	destNeedsPicker := destAmb && !dcOK
+	if originNeedsPicker || destNeedsPicker {
+		return nil, nil, buildAmbiguityErrorResult(origin, destination, originNeedsPicker, destNeedsPicker, ocStops, dcStops)
+	}
+
+	if originAmb {
+		params.Set("name_origin", ocPicked.ID)
+	}
+	if destAmb {
+		params.Set("name_destination", dcPicked.ID)
+	}
+	u := slclient.BuildURL(journeyPlannerBase, "/v2/trips", params)
+	body, errResult := fetchJSONRaw(ctx, client, u)
+	if errResult != nil {
+		return nil, nil, errResult
+	}
+	return body, warnings, nil
+}
+
+// resolveSide decides what to do with the stop-typed candidates for one
+// side when the broker flagged it as ambiguous. Returns (picked, warning,
+// ok) where picked is the candidate to auto-retry with, warning is the
+// exact-match shadow notice (nil when not applicable), and ok is false
+// when the caller should fall back to the ambiguity picker.
+func resolveSide(side, query string, ambiguous bool, stops []locationCandidate) (*locationCandidate, *tripWarning, bool) {
+	if !ambiguous {
+		return nil, nil, true
+	}
+	if len(stops) == 1 {
+		return &stops[0], nil, true
+	}
+	if picked, shadowed, ok := pickExactMatch(stops); ok {
+		return picked, &tripWarning{
+			Code:     "exact_match_shadowed",
+			Side:     side,
+			Query:    query,
+			Picked:   picked,
+			Shadowed: shadowed,
+		}, true
+	}
+	return nil, nil, false
+}
+
+// splitStopCandidates partitions the candidates into (stops, all) where
+// `stops` is the subset whose upstream type is "stop". Empty or unknown
+// types are treated as non-stops — trip endpoints must be transit stops.
+func splitStopCandidates(cands []locationCandidate) (stops, all []locationCandidate) {
+	all = cands
+	stops = make([]locationCandidate, 0, len(cands))
+	for _, c := range cands {
+		if c.Type == "stop" {
+			stops = append(stops, c)
+		}
+	}
+	return stops, all
+}
+
+// notAStopResponse is the error shape for origin_not_a_stop /
+// destination_not_a_stop: the planner couldn't match the query to a transit
+// stop but did resolve it to one or more non-stop locations (POI/address/
+// locality). The geocoded candidates are preserved so the caller can still
+// recover — e.g. by asking the user to pick a nearby stop.
+type notAStopResponse struct {
+	Error      string              `json:"error"`
+	Query      string              `json:"query"`
+	Candidates []locationCandidate `json:"candidates"`
+	Hint       string              `json:"hint,omitempty"`
+}
+
+func buildNotAStopResult(code, query string, cands []locationCandidate) *mcp.CallToolResult {
+	body, err := json.Marshal(notAStopResponse{
+		Error:      code,
+		Query:      query,
+		Candidates: cands,
+		Hint:       "Resolved to a non-stop (POI/address/locality). Ask the user to pick a nearby transit stop, or use the resolve / stop_finder tool.",
+	})
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to encode not-a-stop response: %v", err))
+	}
+	return mcp.NewToolResultText(string(body))
+}
+
+// rejectPoiResolutionIfNeeded inspects the upstream /v2/trips journeys and,
+// when either side was supplied by name, returns origin_not_a_stop /
+// destination_not_a_stop if the resolved location isn't a transit stop.
+// Returns nil for all-good / no-journey responses.
+func rejectPoiResolutionIfNeeded(body []byte, originByName, destByName bool) *mcp.CallToolResult {
+	if !originByName && !destByName {
+		return nil
+	}
+	origin, dest, ok := firstLegEndpoints(body)
+	if !ok {
+		return nil
+	}
+	if originByName && !isStopResolution(origin) {
+		return buildNotAStopResult("origin_not_a_stop", "", []locationCandidate{candidateFromStopEvent(origin)})
+	}
+	if destByName && !isStopResolution(dest) {
+		return buildNotAStopResult("destination_not_a_stop", "", []locationCandidate{candidateFromStopEvent(dest)})
+	}
+	return nil
+}
+
+// firstLegEndpoints returns the (origin, destination) stop-event objects
+// representing the planner's chosen trip endpoints: first leg's origin and
+// last leg's destination from the first journey. Returns ok=false when the
+// body isn't a journey response.
+func firstLegEndpoints(body []byte) (origin, destination upstreamStopEvent, ok bool) {
+	var root struct {
+		Journeys []struct {
+			Legs []struct {
+				Origin      upstreamStopEvent `json:"origin"`
+				Destination upstreamStopEvent `json:"destination"`
+			} `json:"legs"`
+		} `json:"journeys"`
+	}
+	if err := json.Unmarshal(body, &root); err != nil {
+		return upstreamStopEvent{}, upstreamStopEvent{}, false
+	}
+	if len(root.Journeys) == 0 || len(root.Journeys[0].Legs) == 0 {
+		return upstreamStopEvent{}, upstreamStopEvent{}, false
+	}
+	legs := root.Journeys[0].Legs
+	return legs[0].Origin, legs[len(legs)-1].Destination, true
+}
+
+// stopEventType values upstream uses for "this is a transit stop"
+// (platforms are children of a stop, so they count). Anything else —
+// poi, address, locality, street — is rejected as non-stop.
+func isStopResolution(e upstreamStopEvent) bool {
+	if e.Parent != nil && e.Parent.Type == "stop" {
+		return true
+	}
+	switch e.Type {
+	case "stop", "platform":
+		return true
+	default:
+		return false
+	}
+}
+
+func candidateFromStopEvent(e upstreamStopEvent) locationCandidate {
+	out := locationCandidate{
+		Name: e.Name,
+		ID:   e.ID,
+		Type: e.Type,
+	}
+	if len(e.Coord) >= 2 {
+		out.Coord = e.Coord
+	}
+	if e.Parent != nil {
+		out.Locality = e.Parent.Name
+	}
+	return out
 }
 
 // fetchCandidatesInParallel resolves stop-finder candidates for the ambiguous
