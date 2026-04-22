@@ -122,7 +122,14 @@ func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 		if errResult != nil {
 			return errResult, nil
 		}
-		trimmed, err := trimDepartures(body)
+
+		// Best-effort fetch of /v1/messages so we can rebuild stop_deviations
+		// from a trustworthy source. If this fails, trimDepartures falls back
+		// to filtering upstream's (less trustworthy) list.
+		msgsURL := slclient.BuildURL(deviationsBase, "/v1/messages", url.Values{"future": {"true"}})
+		msgsBody, _ := fetchJSONRaw(ctx, client, msgsURL)
+
+		trimmed, err := trimDepartures(body, msgsBody)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to reshape departures response: %v", err)), nil
 		}

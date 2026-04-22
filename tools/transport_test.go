@@ -165,22 +165,23 @@ func TestSitesTool_NoParamsReturnsAll(t *testing.T) {
 
 func TestDeparturesTool(t *testing.T) {
 	body := loadTestData(t, "departures.json")
-	mock := newMockDoer(body)
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/departures", body: body},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
 
 	_, handler := DeparturesTool(mock)
 
 	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{
-		"site_id": float64(9192),
-	}
+	req.Params.Arguments = map[string]any{"site_id": float64(9192)}
 
 	result, err := handler(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(mock.lastReq.URL.String(), "/v1/sites/9192/departures") {
-		t.Errorf("unexpected URL: %s", mock.lastReq.URL.String())
+	if got := departuresURLSeen(mock); !strings.Contains(got, "/v1/sites/9192/departures") {
+		t.Errorf("unexpected URL: %s", got)
 	}
 
 	text := result.Content[0].(mcp.TextContent).Text
@@ -189,128 +190,362 @@ func TestDeparturesTool(t *testing.T) {
 	}
 }
 
-func TestDeparturesTool_DropsNoisyStopPointsScope(t *testing.T) {
-	body := loadTestData(t, "departures.json")
-	mock := newMockDoer(body)
-
-	_, handler := DeparturesTool(mock)
-
-	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{"site_id": float64(9001)}
-
-	result, _ := handler(context.Background(), req)
-	text := result.Content[0].(mcp.TextContent).Text
-
-	// Fixture stop_deviation 1 has scope.stop_points with Slussen entries.
-	// After the transform these should be gone.
-	if strings.Contains(text, "stop_points") {
-		t.Errorf("stop_deviations should not carry scope.stop_points; response included it")
+// departuresFixture builds a /v1/sites/{id}/departures payload whose
+// departures[] reference the given stop_area IDs (each with a line 43 entry).
+// A placeholder upstream stop_deviation is included so tests can assert the
+// rederive path replaces it.
+func departuresFixture(siteStopAreaIDs ...int) string {
+	type line struct {
+		ID int `json:"id"`
 	}
-	// Broken href values ("null/stop-points/..." etc) must be stripped.
-	if strings.Contains(text, `"null/`) || strings.Contains(text, "null/stop-points") {
-		t.Errorf(`scope entries should have "href" stripped; response still has a "null/..." value`)
+	type stopArea struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
 	}
+	type dep struct {
+		StopArea stopArea `json:"stop_area"`
+		Line     line     `json:"line"`
+	}
+	var departures []dep
+	for _, id := range siteStopAreaIDs {
+		departures = append(departures, dep{
+			StopArea: stopArea{ID: id, Name: "site"},
+			Line:     line{ID: 43},
+		})
+	}
+	root := map[string]any{
+		"departures": departures,
+		"stop_deviations": []map[string]any{{
+			"id":      999000,
+			"message": "(should be replaced)",
+			"scope":   map[string]any{"stop_areas": []map[string]any{{"id": 3031, "name": "Kungsträdgården"}}},
+		}},
+	}
+	b, _ := json.Marshal(root)
+	return string(b)
 }
 
-func TestDeparturesTool_PreservesLineScope(t *testing.T) {
-	body := loadTestData(t, "departures.json")
-	mock := newMockDoer(body)
+type msgSpec struct {
+	CaseID      int
+	StopAreaIDs []int
+	LineIDs     []int
+	PublishFrom string
+	PublishUpto string
+	Header      string
+}
+
+func messagesFixture(specs ...msgSpec) string {
+	type stopArea struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+	}
+	type line struct {
+		ID            int    `json:"id"`
+		Designation   string `json:"designation"`
+		TransportMode string `json:"transport_mode"`
+	}
+	type scope struct {
+		StopAreas []stopArea `json:"stop_areas,omitempty"`
+		Lines     []line     `json:"lines,omitempty"`
+	}
+	type variant struct {
+		Header   string `json:"header"`
+		Language string `json:"language"`
+	}
+	type dev struct {
+		DeviationCaseID int               `json:"deviation_case_id"`
+		Publish         map[string]string `json:"publish"`
+		Scope           scope             `json:"scope"`
+		MessageVariants []variant         `json:"message_variants"`
+	}
+	var out []dev
+	for _, s := range specs {
+		var sas []stopArea
+		for _, id := range s.StopAreaIDs {
+			sas = append(sas, stopArea{ID: id, Name: "area"})
+		}
+		var lns []line
+		for _, id := range s.LineIDs {
+			lns = append(lns, line{ID: id, Designation: "X", TransportMode: "METRO"})
+		}
+		from := s.PublishFrom
+		if from == "" {
+			from = "2026-01-01T00:00:00+02:00"
+		}
+		upto := s.PublishUpto
+		if upto == "" {
+			upto = "2099-01-01T00:00:00+02:00"
+		}
+		out = append(out, dev{
+			DeviationCaseID: s.CaseID,
+			Publish:         map[string]string{"from": from, "upto": upto},
+			Scope:           scope{StopAreas: sas, Lines: lns},
+			MessageVariants: []variant{{Header: s.Header, Language: "sv"}},
+		})
+	}
+	b, _ := json.Marshal(out)
+	return string(b)
+}
+
+func TestDeparturesTool_RederivesStopDeviationsFromMessages(t *testing.T) {
+	// Departures reference stop_area 1051 (T-Centralen metro) + 5310 (commuter rail).
+	depBody := departuresFixture(1051, 5310)
+	msgs := messagesFixture(
+		msgSpec{CaseID: 10421009, StopAreaIDs: []int{1051}, Header: "T-Centralen escalator"},    // matches site
+		msgSpec{CaseID: 11062315, StopAreaIDs: []int{3031}, Header: "Kungsträdgården schedule"}, // different area
+		msgSpec{CaseID: 11073715, StopAreaIDs: []int{1021}, Header: "Gamla stan lift"},          // different area
+	)
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v1/sites/9001/departures", body: depBody},
+		{pathContains: "/v1/messages", body: msgs},
+	}}
 
 	_, handler := DeparturesTool(mock)
-
 	req := mcp.CallToolRequest{}
 	req.Params.Arguments = map[string]any{"site_id": float64(9001)}
 
-	result, _ := handler(context.Background(), req)
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 	text := result.Content[0].(mcp.TextContent).Text
 
-	// scope.lines should still be present — callers want to know which
-	// lines are affected, just not every platform in the network.
 	var out struct {
 		StopDeviations []struct {
-			Scope struct {
-				Lines []struct {
-					Designation   string `json:"designation"`
-					TransportMode string `json:"transport_mode"`
-				} `json:"lines"`
-			} `json:"scope"`
+			ID int `json:"id"`
 		} `json:"stop_deviations"`
 	}
 	if err := json.Unmarshal([]byte(text), &out); err != nil {
-		t.Fatalf("failed to parse response: %v", err)
+		t.Fatalf("parse: %v\n%s", err, text)
 	}
-	if len(out.StopDeviations) == 0 || len(out.StopDeviations[0].Scope.Lines) == 0 {
-		t.Errorf("expected scope.lines to survive the transform, got %+v", out.StopDeviations)
+	got := map[int]bool{}
+	for _, sd := range out.StopDeviations {
+		got[sd.ID] = true
 	}
+	if !got[10421009] {
+		t.Errorf("T-Centralen escalator (10421009) should be present")
+	}
+	if got[11062315] || got[11073715] {
+		t.Errorf("neighbouring-station deviations should be dropped")
+	}
+	if got[999000] {
+		t.Errorf("upstream placeholder stop_deviation should be replaced by rederive")
+	}
+}
+
+func TestDeparturesTool_RederiveKeepsLineOnlyScope(t *testing.T) {
+	depBody := departuresFixture(1051, 5310)
+	msgs := messagesFixture(
+		msgSpec{CaseID: 12345, LineIDs: []int{43}, Header: "Line 43 network-wide"},
+		msgSpec{CaseID: 67890, LineIDs: []int{99}, Header: "Line 99 not served"},
+	)
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v1/sites/9001/departures", body: depBody},
+		{pathContains: "/v1/messages", body: msgs},
+	}}
+
+	_, handler := DeparturesTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": float64(9001)}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		StopDeviations []struct{ ID int } `json:"stop_deviations"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	got := map[int]bool{}
+	for _, sd := range out.StopDeviations {
+		got[sd.ID] = true
+	}
+	if !got[12345] {
+		t.Errorf("line-43 deviation (site serves line 43) should be kept")
+	}
+	if got[67890] {
+		t.Errorf("line-99 deviation should be dropped — site doesn't serve line 99")
+	}
+}
+
+func TestDeparturesTool_RederiveFiltersExpiredDeviations(t *testing.T) {
+	depBody := departuresFixture(1051)
+	expired := messagesFixture(msgSpec{
+		CaseID:      55555,
+		StopAreaIDs: []int{1051},
+		PublishFrom: "2026-01-01T00:00:00+02:00",
+		PublishUpto: "2026-02-01T00:00:00+02:00",
+		Header:      "Already ended",
+	})
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v1/sites/9001/departures", body: depBody},
+		{pathContains: "/v1/messages", body: expired},
+	}}
+
+	_, handler := DeparturesTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": float64(9001)}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		StopDeviations []struct{ ID int } `json:"stop_deviations"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	for _, sd := range out.StopDeviations {
+		if sd.ID == 55555 {
+			t.Errorf("expired deviation should not attach")
+		}
+	}
+}
+
+func TestDeparturesTool_RederiveFallbackWhenMessagesFails(t *testing.T) {
+	depBody := departuresFixture(1051, 5310)
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v1/sites/9001/departures", body: depBody},
+		{pathContains: "/v1/messages", status: 500, body: "upstream down"},
+	}}
+
+	_, handler := DeparturesTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": float64(9001)}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("departures should not fail when /v1/messages fails: %s",
+			result.Content[0].(mcp.TextContent).Text)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		StopDeviations []struct {
+			ID int `json:"id"`
+		} `json:"stop_deviations"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	for _, sd := range out.StopDeviations {
+		if sd.ID == 999000 {
+			t.Errorf("fallback should still drop upstream stop_deviation scoped to non-matching stop_area")
+		}
+	}
+}
+
+func TestDeparturesTool_StripsHrefsAndStopPointsFromRemainingScope(t *testing.T) {
+	// Even the rederived deviations must not carry broken href values or
+	// nested scope.stop_points — verify both survive the strip pass.
+	depBody := departuresFixture(1051)
+	// Hand-craft a messages body with a href field and a nested stop_points
+	// array to prove they're stripped from the final output.
+	msgs := `[{
+		"deviation_case_id": 77777,
+		"publish": {"from": "2026-01-01T00:00:00+02:00", "upto": "2099-01-01T00:00:00+02:00"},
+		"scope": {
+			"stop_areas": [{"id": 1051, "name": "T-Centralen", "href": "null/stop-areas/1051"}],
+			"stop_points": [{"id": 3051, "name": "T-Centralen"}],
+			"lines": [{"id": 17, "designation": "17", "transport_mode": "METRO", "href": "null/lines/17"}]
+		},
+		"message_variants": [{"header": "H", "language": "sv"}]
+	}]`
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v1/sites/9001/departures", body: depBody},
+		{pathContains: "/v1/messages", body: msgs},
+	}}
+
+	_, handler := DeparturesTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": float64(9001)}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	if strings.Contains(text, `"null/`) {
+		t.Errorf(`broken href values ("null/...") should be stripped`)
+	}
+	if strings.Contains(text, "stop_points") {
+		t.Errorf("scope.stop_points should be dropped from rederived entries")
+	}
+}
+
+// departuresURLSeen returns the /v1/sites/{id}/departures URL from the mock's
+// recorded calls, or empty string if none was made.
+func departuresURLSeen(m *routedMock) string {
+	for _, c := range m.calls {
+		if strings.Contains(c.URL.Path, "/departures") {
+			return c.URL.String()
+		}
+	}
+	return ""
 }
 
 func TestDeparturesTool_StripsPrefixedID(t *testing.T) {
 	// 18009192 is the zero-padded "180" + shortId form returned by stop-finder;
 	// the departures endpoint only accepts the short id (9192).
-	body := loadTestData(t, "departures.json")
-	mock := newMockDoer(body)
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/departures", body: `{"departures":[],"stop_deviations":[]}`},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
 
 	_, handler := DeparturesTool(mock)
 
 	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{
-		"site_id": float64(18009192),
-	}
+	req.Params.Arguments = map[string]any{"site_id": float64(18009192)}
 
 	_, err := handler(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(mock.lastReq.URL.String(), "/v1/sites/9192/departures") {
-		t.Errorf("expected /v1/sites/9192/departures after normalizing 18009192, got %s", mock.lastReq.URL.String())
+	if got := departuresURLSeen(mock); !strings.Contains(got, "/v1/sites/9192/departures") {
+		t.Errorf("expected /v1/sites/9192/departures after normalizing 18009192, got %s", got)
 	}
 }
 
 func TestDeparturesTool_StripsWishlistPrefixedID(t *testing.T) {
 	// 1809001 is the non-zero-padded form (180 + 9001) that a caller might
 	// construct by hand; accept it too.
-	body := loadTestData(t, "departures.json")
-	mock := newMockDoer(body)
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/departures", body: `{"departures":[],"stop_deviations":[]}`},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
 
 	_, handler := DeparturesTool(mock)
 
 	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{
-		"site_id": float64(1809001),
-	}
+	req.Params.Arguments = map[string]any{"site_id": float64(1809001)}
 
 	_, err := handler(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(mock.lastReq.URL.String(), "/v1/sites/9001/departures") {
-		t.Errorf("expected /v1/sites/9001/departures after normalizing 1809001, got %s", mock.lastReq.URL.String())
+	if got := departuresURLSeen(mock); !strings.Contains(got, "/v1/sites/9001/departures") {
+		t.Errorf("expected /v1/sites/9001/departures after normalizing 1809001, got %s", got)
 	}
 }
 
 func TestDeparturesTool_PreservesLow180IDs(t *testing.T) {
 	// Real sites exist in the 1800-1809 range (e.g. 1809 = Söndagsvägen).
-	// These must pass through unchanged — normalization only applies to
-	// IDs outside the real short-id range (> 9999).
-	body := loadTestData(t, "departures.json")
-	mock := newMockDoer(body)
+	// These must pass through unchanged.
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/departures", body: `{"departures":[],"stop_deviations":[]}`},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
 
 	_, handler := DeparturesTool(mock)
 
 	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{
-		"site_id": float64(1809),
-	}
+	req.Params.Arguments = map[string]any{"site_id": float64(1809)}
 
 	_, err := handler(context.Background(), req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !strings.Contains(mock.lastReq.URL.String(), "/v1/sites/1809/departures") {
-		t.Errorf("expected /v1/sites/1809/departures unchanged, got %s", mock.lastReq.URL.String())
+	if got := departuresURLSeen(mock); !strings.Contains(got, "/v1/sites/1809/departures") {
+		t.Errorf("expected /v1/sites/1809/departures unchanged, got %s", got)
 	}
 }
 
