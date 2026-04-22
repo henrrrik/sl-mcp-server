@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -1053,6 +1054,207 @@ func TestLinesTool_AllFiltersCombined(t *testing.T) {
 	}
 	if lines[0]["name"] != "Slussen-Saltsjöbaden" {
 		t.Errorf("expected Slussen-Saltsjöbaden, got %v", lines[0]["name"])
+	}
+}
+
+// P1: designation prefix filter. "4" matches designation 4 and 471 but not
+// lines whose name starts with 4.
+func TestLinesTool_DesignationPrefixFilter(t *testing.T) {
+	body := loadTestData(t, "lines.json")
+	mock := newMockDoer(body)
+
+	_, handler := LinesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"designation": "4"}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var lines []map[string]any
+	if err := json.Unmarshal([]byte(text), &lines); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	// Fixture has designation=4 (bus), 471 (bus), 40 (train). All start with "4".
+	wantSet := map[string]bool{"4": true, "471": true, "40": true}
+	gotSet := map[string]bool{}
+	for _, l := range lines {
+		gotSet[l["designation"].(string)] = true
+	}
+	for d := range wantSet {
+		if !gotSet[d] {
+			t.Errorf("missing expected designation %q, got %v", d, gotSet)
+		}
+	}
+	for d := range gotSet {
+		if !wantSet[d] {
+			t.Errorf("unexpected designation %q in results (prefix='4')", d)
+		}
+	}
+}
+
+// P1: designation is prefix-only. "47" matches 471 but not 4.
+func TestLinesTool_DesignationPrefixIsStrict(t *testing.T) {
+	body := loadTestData(t, "lines.json")
+	mock := newMockDoer(body)
+
+	_, handler := LinesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"designation": "47"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var lines []map[string]any
+	_ = json.Unmarshal([]byte(text), &lines)
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 match for prefix '47', got %d", len(lines))
+	}
+	if lines[0]["designation"] != "471" {
+		t.Errorf("expected designation=471, got %v", lines[0]["designation"])
+	}
+}
+
+// P1: group_of_lines substring filter. "blåbuss" matches both fixture
+// entries tagged with that group.
+func TestLinesTool_GroupOfLinesFilter(t *testing.T) {
+	body := loadTestData(t, "lines.json")
+	mock := newMockDoer(body)
+
+	_, handler := LinesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"group_of_lines": "blåbuss"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var lines []map[string]any
+	_ = json.Unmarshal([]byte(text), &lines)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 blåbuss entries, got %d", len(lines))
+	}
+	for _, l := range lines {
+		if g, _ := l["group_of_lines"].(string); !strings.Contains(strings.ToLower(g), "blåbuss") {
+			t.Errorf("expected group_of_lines to contain blåbuss, got %q", g)
+		}
+	}
+}
+
+// P1: group_of_lines is case-insensitive and matches substrings inside
+// the full group name ("tunnelbanans röda linje" contains "röda").
+func TestLinesTool_GroupOfLinesCaseInsensitiveAndSubstring(t *testing.T) {
+	body := loadTestData(t, "lines.json")
+	mock := newMockDoer(body)
+
+	_, handler := LinesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"group_of_lines": "RÖDA"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var lines []map[string]any
+	_ = json.Unmarshal([]byte(text), &lines)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 röda-line entries (metro 13 and 14), got %d", len(lines))
+	}
+}
+
+// P1: designation + transport_mode compose. "4" prefix + metro should
+// return nothing (metros in the fixture are 10, 13, 14).
+func TestLinesTool_DesignationAndModeCompose(t *testing.T) {
+	body := loadTestData(t, "lines.json")
+	mock := newMockDoer(body)
+
+	_, handler := LinesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"designation":    "4",
+		"transport_mode": "metro",
+	}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var lines []map[string]any
+	_ = json.Unmarshal([]byte(text), &lines)
+	if len(lines) != 0 {
+		t.Errorf("expected no metros starting with '4', got %d", len(lines))
+	}
+}
+
+// P1: default limit is 50 (anti-flood). Fixture is 10 lines, so no
+// truncation happens, but the filter default must be applied.
+func TestLinesTool_DefaultLimitIsFifty(t *testing.T) {
+	// Craft a response with 80 lines to prove the default cap kicks in.
+	type line struct {
+		ID            int    `json:"id"`
+		Designation   string `json:"designation"`
+		Name          string `json:"name"`
+		TransportMode string `json:"transport_mode"`
+	}
+	bus := make([]line, 80)
+	for i := range bus {
+		bus[i] = line{
+			ID:            1000 + i,
+			Designation:   fmt.Sprintf("b%d", i),
+			Name:          fmt.Sprintf("Line %d", i),
+			TransportMode: "BUS",
+		}
+	}
+	b, _ := json.Marshal(map[string]any{"bus": bus})
+	mock := newMockDoer(string(b))
+
+	_, handler := LinesTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var lines []map[string]any
+	_ = json.Unmarshal([]byte(text), &lines)
+	if len(lines) != 50 {
+		t.Errorf("expected default limit of 50, got %d", len(lines))
+	}
+}
+
+// P1: limit=0 means unlimited. 80 lines in, 80 out.
+func TestLinesTool_ZeroLimitMeansUnlimited(t *testing.T) {
+	type line struct {
+		ID            int    `json:"id"`
+		Designation   string `json:"designation"`
+		Name          string `json:"name"`
+		TransportMode string `json:"transport_mode"`
+	}
+	bus := make([]line, 80)
+	for i := range bus {
+		bus[i] = line{ID: i, Designation: fmt.Sprintf("b%d", i), Name: "x", TransportMode: "BUS"}
+	}
+	b, _ := json.Marshal(map[string]any{"bus": bus})
+	mock := newMockDoer(string(b))
+
+	_, handler := LinesTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"limit": float64(0)}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var lines []map[string]any
+	_ = json.Unmarshal([]byte(text), &lines)
+	if len(lines) != 80 {
+		t.Errorf("expected limit=0 to mean unlimited (80), got %d", len(lines))
 	}
 }
 

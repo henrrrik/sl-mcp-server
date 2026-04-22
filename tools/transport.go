@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/henrrrik/sl-mcp-server/slclient"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -157,18 +158,24 @@ func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 
 func LinesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("lines",
-		mcp.WithDescription("Enumerate SL's catalog of transit lines and their canonical numeric ids. Returns a flat JSON array of line objects (upstream groups them by mode, but each object carries transport_mode so the grouping adds no information). Combine transport_mode, query, and limit to narrow the result."),
+		mcp.WithDescription("Enumerate SL's catalog of transit lines and their canonical numeric ids. Returns a flat JSON array of line objects (upstream groups them by mode, but each object carries transport_mode so the grouping adds no information). The full catalog is ~600 entries; always narrow the result with transport_mode, designation, group_of_lines, or query before reading it into an LLM context. Default limit is 50; pass limit=0 to page through the full catalog."),
 		mcp.WithNumber("transport_authority_id", mcp.Description("Transport authority ID from the transport_authorities tool. Defaults to 1 (Storstockholms Lokaltrafik).")),
 		mcp.WithString("transport_mode", mcp.Description("Restrict to a single mode (case-insensitive): metro, bus, tram, train, ferry, ship, taxi. Unknown modes return an empty array.")),
-		mcp.WithString("query", mcp.Description("Case-insensitive substring match on line name OR designation. Example: 'röda' matches the Red metro lines; '471' matches bus 471 via its designation.")),
-		mcp.WithNumber("limit", mcp.Description("Maximum number of lines to return. Omitted or 0 means no limit.")),
+		mcp.WithString("designation", mcp.Description("Prefix match on the line's designation. '54' matches 54 / 540 / 541 / 542 / …. Narrower than query; prefer this when searching by line number.")),
+		mcp.WithString("group_of_lines", mcp.Description("Case-insensitive substring match on the group_of_lines field. Examples: 'pendeltåg', 'blåbuss', 'närtrafiken'.")),
+		mcp.WithString("query", mcp.Description("Case-insensitive substring match on line name OR designation. Example: 'röda' matches the Red metro lines; '471' matches bus 471. Broader than designation.")),
+		mcp.WithNumber("limit", mcp.Description("Maximum number of lines to return. Defaults to 50; pass 0 for unlimited.")),
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		authorityID := request.GetInt("transport_authority_id", 1)
-		transportMode := request.GetString("transport_mode", "")
-		query := request.GetString("query", "")
-		limit := request.GetInt("limit", 0)
+		filters := linesFilters{
+			mode:         strings.ToLower(request.GetString("transport_mode", "")),
+			query:        strings.ToLower(request.GetString("query", "")),
+			designation:  strings.ToLower(request.GetString("designation", "")),
+			groupOfLines: strings.ToLower(request.GetString("group_of_lines", "")),
+			limit:        request.GetInt("limit", defaultLinesLimit),
+		}
 
 		params := url.Values{"transport_authority_id": {fmt.Sprintf("%d", authorityID)}}
 		u := slclient.BuildURL(transportBase, "/v1/lines", params)
@@ -177,7 +184,7 @@ func LinesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 		if errResult != nil {
 			return errResult, nil
 		}
-		filtered, err := flattenAndFilterLines(body, transportMode, query, limit)
+		filtered, err := flattenAndFilterLines(body, filters)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to reshape lines response: %v", err)), nil
 		}
@@ -186,6 +193,11 @@ func LinesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 
 	return tool, handler
 }
+
+// defaultLinesLimit caps the no-arg response at something an LLM can
+// reasonably read. Callers asking for the full ~600-entry catalog must
+// opt in with limit=0 (unlimited).
+const defaultLinesLimit = 50
 
 func StopPointsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("stop_points",
