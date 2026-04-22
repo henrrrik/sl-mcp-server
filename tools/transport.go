@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -96,14 +97,26 @@ func SitesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 
 func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("departures",
-		mcp.WithDescription("Get real-time departures from an SL transit site. The returned stop_deviations are rebuilt from /v1/messages, filtered to scopes that touch this site's stop_areas, stop_points, or lines, so the disruptions attached actually apply here — with a fallback to filtering upstream's raw list if /v1/messages is unreachable. Use the sites tool to discover the id."),
-		mcp.WithNumber("site_id", mcp.Required(), mcp.Description("Site ID from the sites tool (e.g. 9192 for Slussen, 9001 for T-Centralen).")),
+		mcp.WithDescription("Get real-time departures from an SL transit site. Accepts the short-form site_id from SL:sites, the 8-digit 18xx form from SL:stop_finder.properties.stopId, or the 16-digit GID from SL:stop_finder.id — all are normalized to the short form before the upstream call. The returned stop_deviations are rebuilt from /v1/messages, filtered to scopes that touch this site's stop_areas, stop_points, or lines, so the disruptions attached actually apply here — with a fallback to filtering upstream's raw list if /v1/messages is unreachable."),
+		mcp.WithString("site_id", mcp.Required(), mcp.Description("Site ID. Accepts the short form from SL:sites (e.g. \"9702\"), the 8-digit form from stop_finder.properties.stopId (e.g. \"18009702\"), or the 16-digit GID from stop_finder.id (e.g. \"9091001000009702\"). All are normalized to the short form before the upstream call. Pass as a string — 16-digit GIDs exceed JS Number.MAX_SAFE_INTEGER and lose precision if typed as a number.")),
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		siteID := request.GetInt("site_id", 0)
-		if siteID == 0 {
+		raw, present := request.GetArguments()["site_id"]
+		if !present {
 			return mcp.NewToolResultError("site_id is required"), nil
+		}
+		input := coerceSiteIDArg(raw)
+		if input == "" {
+			return mcp.NewToolResultError((&siteIDError{Code: errInvalidSiteIDFormat, Input: fmt.Sprintf("%v", raw)}).asJSON()), nil
+		}
+		siteID, err := normalizeSiteID(input)
+		if err != nil {
+			var se *siteIDError
+			if errors.As(err, &se) {
+				return mcp.NewToolResultError(se.asJSON()), nil
+			}
+			return mcp.NewToolResultError(err.Error()), nil
 		}
 
 		params := url.Values{}
