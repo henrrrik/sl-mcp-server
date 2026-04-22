@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### deviations
+
+- Fixes an accessibility regression: `deviations(transport_mode="METRO")`
+  silently dropped every FACILITY-category entry (lift outages, escalator
+  work, closed entrances) because SL's upstream `transport_mode` filter
+  requires a `scope.lines[]` match and facility entries are scoped by
+  `stop_areas` only.
+- `transport_mode` is now applied client-side, never forwarded upstream.
+- New `include_facility` flag (default `false`). When `true`, FACILITY
+  entries are preserved through the client-side filter so wheelchair
+  users and parents with strollers can see live lift/escalator status.
+- The slim response now echoes `categories` as flat `"GROUP:NAME"` strings
+  (e.g. `"FACILITY:LIFT"`, `"FACILITY:ESCALATOR"`) so callers can branch
+  without a `verbose=true` fetch. Both upstream category shapes (plain
+  strings and structured `{group, name}`) are normalized.
+- Behavior change: no-arg `deviations()` now excludes FACILITY entries by
+  default. This matches the tool description; pass `include_facility=true`
+  for the pre-change default.
+
 ### nearest_stops (new tool)
 
 - `nearest_stops(lat, lon, radius_m=500, limit=5)` returns SL sites

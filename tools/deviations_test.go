@@ -264,12 +264,212 @@ func TestDeviationsTool_WithParams(t *testing.T) {
 	if q.Get("future") != "true" {
 		t.Errorf("expected future=true, got %q", q.Get("future"))
 	}
-	if q.Get("transport_mode") != "BUS" {
-		t.Errorf("expected transport_mode=BUS, got %q", q.Get("transport_mode"))
-	}
 	if q.Get("line") != "42" {
 		t.Errorf("expected line=42, got %q", q.Get("line"))
 	}
+	// transport_mode is applied client-side, not upstream — otherwise SL's
+	// filter drops every FACILITY entry (lifts, escalators, entrances).
+	// See TestDeviationsTool_IncludeFacilityKeepsLiftAlerts.
+	if q.Get("transport_mode") != "" {
+		t.Errorf("transport_mode must NOT be forwarded upstream; got %q", q.Get("transport_mode"))
+	}
+}
+
+// Round 2, Section 1: default behavior drops FACILITY entries (lift/
+// escalator/entrance alerts) from the slim response. This replaces the
+// earlier reliance on SL's upstream transport_mode filter doing the drop
+// as a side-effect.
+func TestDeviationsTool_DefaultDropsFacilityEntries(t *testing.T) {
+	body := facilityFixture()
+	mock := newMockDoer(body)
+	_, handler := DeviationsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out []map[string]any
+	_ = json.Unmarshal([]byte(text), &out)
+	for _, e := range out {
+		if cats, _ := e["categories"].([]any); len(cats) > 0 {
+			for _, c := range cats {
+				if s, _ := c.(string); strings.HasPrefix(s, "FACILITY") {
+					t.Errorf("FACILITY entry should be dropped by default, got %+v", e)
+				}
+			}
+		}
+	}
+}
+
+// Round 2, Section 1 acceptance: transport_mode=METRO (without
+// include_facility) returns only the line-scoped METRO entries — matching
+// the current behavior. Facility entries at METRO stations are excluded.
+func TestDeviationsTool_TransportModeWithoutFacility(t *testing.T) {
+	body := facilityFixture()
+	mock := newMockDoer(body)
+	_, handler := DeviationsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"transport_mode": "METRO"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out []struct {
+		DeviationCaseID int      `json:"deviation_case_id"`
+		Categories      []string `json:"categories"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+
+	// Fixture: 1 line-scope METRO + 1 line-scope BUS + 2 FACILITY (lift +
+	// escalator). Without include_facility, only the line-scope METRO
+	// survives transport_mode=METRO.
+	if len(out) != 1 {
+		t.Fatalf("expected 1 METRO line-scope deviation (no facility), got %d: %+v", len(out), out)
+	}
+	if out[0].DeviationCaseID != 100 {
+		t.Errorf("expected case 100 (METRO line), got %d", out[0].DeviationCaseID)
+	}
+}
+
+// Round 2, Section 1 acceptance: transport_mode=METRO + include_facility=true
+// returns the line-scope METRO entry AND the FACILITY entries, so lifts and
+// escalators at metro stations are visible to accessibility-aware callers.
+func TestDeviationsTool_IncludeFacilityKeepsLiftAlerts(t *testing.T) {
+	body := facilityFixture()
+	mock := newMockDoer(body)
+	_, handler := DeviationsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"transport_mode":   "METRO",
+		"include_facility": true,
+	}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out []struct {
+		DeviationCaseID int      `json:"deviation_case_id"`
+		Categories      []string `json:"categories"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+
+	// Fixture: 3 entries should survive — line-scope METRO (100) + lift (200) + escalator (201).
+	// The line-scope BUS (101) is filtered out by transport_mode.
+	gotIDs := map[int]bool{}
+	for _, e := range out {
+		gotIDs[e.DeviationCaseID] = true
+	}
+	if !gotIDs[100] {
+		t.Errorf("missing case 100 (METRO line scope)")
+	}
+	if !gotIDs[200] {
+		t.Errorf("missing case 200 (FACILITY lift) — accessibility regression")
+	}
+	if !gotIDs[201] {
+		t.Errorf("missing case 201 (FACILITY escalator)")
+	}
+	if gotIDs[101] {
+		t.Errorf("case 101 (BUS line scope) should be filtered out by transport_mode=METRO")
+	}
+
+	// Categories field should echo the flattened "GROUP:NAME" strings.
+	var sawLift, sawEscalator bool
+	for _, e := range out {
+		for _, c := range e.Categories {
+			if c == "FACILITY:LIFT" {
+				sawLift = true
+			}
+			if c == "FACILITY:ESCALATOR" {
+				sawEscalator = true
+			}
+		}
+	}
+	if !sawLift {
+		t.Errorf("expected FACILITY:LIFT in categories output")
+	}
+	if !sawEscalator {
+		t.Errorf("expected FACILITY:ESCALATOR in categories output")
+	}
+}
+
+// Round 2, Section 1: flattenCategories handles both known upstream shapes
+// (plain []string and structured [{group, name}]) — upstream has emitted
+// both historically and both should round-trip as "GROUP:NAME" strings.
+func TestFlattenCategories(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{"empty", `[]`, nil},
+		{"plain strings", `["PLANNED","FACILITY:LIFT"]`, []string{"PLANNED", "FACILITY:LIFT"}},
+		{"structured", `[{"group":"FACILITY","name":"LIFT"},{"group":"PLANNED"}]`, []string{"FACILITY:LIFT", "PLANNED"}},
+		{"mixed missing", `[{"name":"STANDALONE"},{"group":""}]`, []string{"STANDALONE"}},
+		{"malformed number", `42`, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := flattenCategories([]byte(tc.in))
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %d entries %v, want %d %v", len(got), got, len(tc.want), tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("[%d]: got %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// facilityFixture returns a /v1/messages body with:
+//   - case 100: METRO line-scoped deviation (t-bana line 17)
+//   - case 101: BUS line-scoped deviation (bus 1)
+//   - case 200: FACILITY lift at Gamla stan (scope: stop_areas, not lines)
+//   - case 201: FACILITY escalator at T-Centralen
+func facilityFixture() string {
+	return `[
+		{
+			"deviation_case_id": 100,
+			"message_variants": [{"header":"Line 17 delayed","details":"Signal failure","language":"sv"}],
+			"publish": {"from":"2026-04-20T00:00:00+02:00","upto":"2026-05-01T00:00:00+02:00"},
+			"scope": {
+				"lines": [{"id": 17, "designation": "17", "transport_mode": "METRO"}]
+			},
+			"categories": [{"group":"PLANNED"}]
+		},
+		{
+			"deviation_case_id": 101,
+			"message_variants": [{"header":"Bus 1 detour","details":"Street work","language":"sv"}],
+			"publish": {"from":"2026-04-20T00:00:00+02:00","upto":"2026-05-01T00:00:00+02:00"},
+			"scope": {
+				"lines": [{"id": 1, "designation": "1", "transport_mode": "BUS"}]
+			},
+			"categories": [{"group":"PLANNED"}]
+		},
+		{
+			"deviation_case_id": 200,
+			"message_variants": [{"header":"Gamla stan lift","details":"Lift out of service","language":"sv"}],
+			"publish": {"from":"2026-04-20T00:00:00+02:00","upto":"2026-05-01T00:00:00+02:00"},
+			"scope": {
+				"stop_areas": [{"id": 1021, "name": "Gamla stan", "type": "METROSTN"}]
+			},
+			"categories": [{"group":"FACILITY","name":"LIFT"}]
+		},
+		{
+			"deviation_case_id": 201,
+			"message_variants": [{"header":"T-Centralen escalator","details":"Escalator maintenance","language":"sv"}],
+			"publish": {"from":"2026-04-20T00:00:00+02:00","upto":"2026-05-01T00:00:00+02:00"},
+			"scope": {
+				"stop_areas": [{"id": 1051, "name": "T-Centralen", "type": "METROSTN"}]
+			},
+			"categories": [{"group":"FACILITY","name":"ESCALATOR"}]
+		}
+	]`
 }
 
 // P1: site accepts all four id formats and normalizes to short form before

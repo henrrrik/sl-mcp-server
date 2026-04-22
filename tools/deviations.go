@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/henrrrik/sl-mcp-server/slclient"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -15,12 +16,13 @@ const deviationsBase = "https://deviations.integration.sl.se"
 
 func DeviationsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("deviations",
-		mcp.WithDescription("Get SL traffic deviations and disruptions in Stockholm public transport. Returns a slim summary per deviation by default (deviation_case_id, header, details, publish window, affected lines/stop_areas, categories) — set verbose=true for the full upstream payload with importance levels, scope metadata, href links, and all language variants."),
+		mcp.WithDescription("Get SL traffic deviations and disruptions in Stockholm public transport. Returns a slim summary per deviation by default (deviation_case_id, header, details, publish window, affected lines/stop_areas, categories) — set verbose=true for the full upstream payload. Lift/escalator/entrance alerts (categories tagged with the FACILITY group) are excluded by default; set include_facility=true to include them, which is important for accessibility-aware trip planning."),
 		mcp.WithBoolean("future", mcp.Description("Include future deviations")),
 		mcp.WithString("site", mcp.Description("Filter by site. Accepts the short-form site_id (e.g. \"9001\" for T-Centralen), the 8-digit 18xx form, the 9-digit 3BA1CDEFG form, or the 16-digit GID — all normalized to the short form before the upstream call. Pass as a string; 16-digit GIDs exceed JS Number.MAX_SAFE_INTEGER.")),
 		mcp.WithNumber("line", mcp.Description("Filter by line number")),
-		mcp.WithString("transport_mode", mcp.Description("Filter by mode: BUS, METRO, TRAIN, TRAM, SHIP, FERRY")),
-		mcp.WithBoolean("verbose", mcp.Description("Return the raw upstream payload with every field (version, created, priority, full scope, href links). Default false (slim summary).")),
+		mcp.WithString("transport_mode", mcp.Description("Filter by mode: BUS, METRO, TRAIN, TRAM, SHIP, FERRY. Applied in-process so that FACILITY-category entries (which upstream drops under any transport_mode filter) can still surface when include_facility=true.")),
+		mcp.WithBoolean("include_facility", mcp.Description("Include lift/escalator/entrance alerts (categories with group=FACILITY). Default false — these are noise for most travelers but required for accessibility-aware trip planning, so wheelchair users and parents with strollers should pass include_facility=true.")),
+		mcp.WithBoolean("verbose", mcp.Description("Return the raw upstream payload with every field (version, created, priority, full scope, href links). Default false (slim summary). Note: verbose does not apply the facility filter — callers get whatever SL returned.")),
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -37,9 +39,13 @@ func DeviationsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 		if v := request.GetInt("line", 0); v != 0 {
 			params.Set("line", fmt.Sprintf("%d", v))
 		}
-		if v := request.GetString("transport_mode", ""); v != "" {
-			params.Set("transport_mode", v)
-		}
+
+		// transport_mode is ALWAYS applied client-side. SL's upstream filter
+		// drops every entry without scope.lines — i.e. every lift/escalator
+		// notice, which are scoped by stop_area. Passing transport_mode
+		// client-side lets us keep FACILITY entries when asked.
+		transportMode := strings.TrimSpace(request.GetString("transport_mode", ""))
+		includeFacility := request.GetBool("include_facility", false)
 
 		u := slclient.BuildURL(deviationsBase, "/v1/messages", params)
 
@@ -51,7 +57,10 @@ func DeviationsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 		if errResult != nil {
 			return errResult, nil
 		}
-		slim, err := trimDeviationsList(body)
+		slim, err := trimDeviationsList(body, deviationsClientFilters{
+			transportMode:   transportMode,
+			includeFacility: includeFacility,
+		})
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to reshape deviations response: %v", err)), nil
 		}
