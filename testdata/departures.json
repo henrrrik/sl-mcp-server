@@ -1,11 +1,162 @@
 {
   "departures": [
     {
-      "destination": "Kungsträdgården",
+      "destination": "Västerhaninge",
       "direction_code": 1,
-      "display": "2 min",
-      "line": {"id": 19, "designation": "19", "transport_mode": "METRO"}
+      "direction": "Nynäshamn",
+      "state": "ATSTOP",
+      "display": "Nu",
+      "scheduled": "2026-04-21T23:51:00",
+      "expected": "2026-04-21T23:51:00",
+      "journey": {
+        "id": 2026042102879,
+        "state": "NORMALPROGRESS",
+        "prediction_state": "NORMAL"
+      },
+      "stop_area": {
+        "id": 5310,
+        "name": "Stockholm City",
+        "type": "RAILWSTN"
+      },
+      "stop_point": {
+        "id": 5313,
+        "name": "Stockholm City",
+        "designation": "4"
+      },
+      "line": {
+        "id": 43,
+        "designation": "43",
+        "transport_authority_id": 1,
+        "transport_mode": "TRAIN",
+        "group_of_lines": "Pendeltåg"
+      },
+      "deviations": []
+    },
+    {
+      "destination": "Södertälje centrum",
+      "direction_code": 1,
+      "direction": "Södertälje",
+      "state": "ATSTOP",
+      "display": "Nu",
+      "scheduled": "2026-04-21T23:54:00",
+      "expected": "2026-04-21T23:54:00",
+      "journey": {
+        "id": 2026042102279,
+        "state": "NORMALPROGRESS",
+        "prediction_state": "NORMAL"
+      },
+      "stop_area": {
+        "id": 5310,
+        "name": "Stockholm City",
+        "type": "RAILWSTN"
+      },
+      "stop_point": {
+        "id": 5311,
+        "name": "Stockholm City",
+        "designation": "3"
+      },
+      "line": {
+        "id": 40,
+        "designation": "40",
+        "transport_authority_id": 1,
+        "transport_mode": "TRAIN",
+        "group_of_lines": "Pendeltåg"
+      },
+      "deviations": []
     }
   ],
-  "stop_deviations": []
+  "stop_deviations": [
+    {
+      "id": 11078841,
+      "importance_level": 7,
+      "message": "Tågen stannar inte vid Blåsut pga tekniskt fel. Hänvisning till närliggande stationer, alternativa resvägar och tillgänglighetsgarantin.\n",
+      "scope": {
+        "stop_points": [
+          {
+            "id": 1011,
+            "href": "null/stop-points/1011",
+            "name": "Slussen",
+            "designation": "1"
+          },
+          {
+            "id": 1012,
+            "href": "null/stop-points/1012",
+            "name": "Slussen",
+            "designation": "4"
+          },
+          {
+            "id": 1021,
+            "href": "null/stop-points/1021",
+            "name": "Gamla stan",
+            "designation": "1"
+          }
+        ],
+        "lines": [
+          {
+            "id": 17,
+            "href": "null/transport-authorities/1/lines/17",
+            "designation": "17",
+            "transport_authority_id": 1,
+            "transport_mode": "METRO",
+            "group_of_lines": "Tunnelbanans gröna linje"
+          },
+          {
+            "id": 18,
+            "href": "null/transport-authorities/1/lines/18",
+            "designation": "18",
+            "transport_authority_id": 1,
+            "transport_mode": "METRO",
+            "group_of_lines": "Tunnelbanans gröna linje"
+          }
+        ]
+      }
+    },
+    {
+      "id": 11062315,
+      "importance_level": 2,
+      "message": "26/4-15/5: Ändrade avgångstider för det sista tåget mot Hjulsta samt det sista tåget mot Akalla på grund av underhållsarbete. Läs mer i SL-appen.",
+      "scope": {
+        "stop_areas": [
+          {
+            "id": 3031,
+            "href": "null/stop-areas/3031",
+            "name": "Kungsträdgården",
+            "type": "METROSTN"
+          }
+        ],
+        "stop_points": [
+          {
+            "id": 3051,
+            "href": "null/stop-points/3051",
+            "name": "T-Centralen",
+            "designation": "5"
+          },
+          {
+            "id": 3201,
+            "href": "null/stop-points/3201",
+            "name": "Västra skogen",
+            "designation": "1"
+          }
+        ],
+        "lines": [
+          {
+            "id": 10,
+            "href": "null/transport-authorities/1/lines/10",
+            "designation": "10",
+            "transport_authority_id": 1,
+            "transport_mode": "METRO",
+            "group_of_lines": "Tunnelbanans blå linje"
+          },
+          {
+            "id": 11,
+            "href": "null/transport-authorities/1/lines/11",
+            "designation": "11",
+            "transport_authority_id": 1,
+            "transport_mode": "METRO",
+            "group_of_lines": "Tunnelbanans blå linje"
+          }
+        ]
+      }
+    }
+  ]
 }
