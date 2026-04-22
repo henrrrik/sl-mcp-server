@@ -176,3 +176,85 @@ func TestDeviationsTool_WithParams(t *testing.T) {
 		t.Errorf("expected line=42, got %q", q.Get("line"))
 	}
 }
+
+// P1: site accepts all four id formats and normalizes to short form before
+// passing to the upstream query.
+func TestDeviationsTool_SiteAcceptsAllIDFormats(t *testing.T) {
+	cases := []struct {
+		name  string
+		input any
+	}{
+		{"short number (backwards compat)", float64(9001)},
+		{"short string", "9001"},
+		{"18xx string", "18009001"},
+		{"9-digit string", "300109001"},
+		{"16-digit GID string", "9091001000009001"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := newMockDoer(`[]`)
+			_, handler := DeviationsTool(mock)
+
+			req := mcp.CallToolRequest{}
+			req.Params.Arguments = map[string]any{"site": tc.input}
+
+			result, err := handler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.IsError {
+				t.Fatalf("expected success, got error: %s", result.Content[0].(mcp.TextContent).Text)
+			}
+			if got := mock.lastReq.URL.Query().Get("site"); got != "9001" {
+				t.Errorf("expected site=9001 (normalized), got %q", got)
+			}
+		})
+	}
+}
+
+// P1: invalid site input echoes as a string, never as scientific-notation
+// number. 1e18 is too big to fit safely in a JSON number, so it should
+// come back as a decimal string rather than "9.09e+15".
+func TestDeviationsTool_InvalidSiteEchoesAsDecimalString(t *testing.T) {
+	mock := newMockDoer(`[]`)
+	_, handler := DeviationsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site": float64(1e18)}
+
+	result, _ := handler(context.Background(), req)
+	if !result.IsError {
+		t.Fatal("expected error for oversized input")
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if strings.Contains(text, "e+") || strings.Contains(text, "e-") {
+		t.Errorf("error echo must not use scientific notation, got %s", text)
+	}
+	if !strings.Contains(text, `"error":"invalid_site_id_format"`) {
+		t.Errorf("expected invalid_site_id_format, got %s", text)
+	}
+}
+
+// P1: a 16-digit GID passed to site should normalize to the short form
+// without precision loss (so no "9.09e+15" — the exact input echoes when
+// out-of-range).
+func TestDeviationsTool_InvalidGIDStringEchoedVerbatim(t *testing.T) {
+	mock := newMockDoer(`[]`)
+	_, handler := DeviationsTool(mock)
+
+	// All-zero tail: a valid GID shape but resolves outside range.
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site": "9091001000000000"}
+
+	result, _ := handler(context.Background(), req)
+	if !result.IsError {
+		t.Fatal("expected error for out-of-range GID")
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, `"input":"9091001000000000"`) {
+		t.Errorf("expected exact input echo, got %s", text)
+	}
+	if !strings.Contains(text, `"error":"site_id_out_of_range"`) {
+		t.Errorf("expected site_id_out_of_range, got %s", text)
+	}
+}

@@ -33,6 +33,39 @@ func SystemInfoTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 	return tool, handler
 }
 
+func ResolveTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
+	tool := mcp.NewTool("resolve",
+		mcp.WithDescription("Resolve a free-text location query to a canonical SL site. Returns the single best match with all three id forms (short site_id, 8-digit 18xx stopId, and 16-digit GID) plus a `candidates` array of runners-up. Prefer this over chaining stop_finder → manual id transform → departures/trips — it's the canonical \"turn a name into an id\" primitive. Only stop-typed results are considered for the best match; POIs and addresses are preserved in `candidates` for recovery but never returned as `best`."),
+		mcp.WithString("query", mcp.Required(), mcp.Description("Free-form name to search for. Fuzzy matching is applied.")),
+	)
+
+	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		query := request.GetString("query", "")
+		if query == "" {
+			return mcp.NewToolResultError("query is required"), nil
+		}
+
+		params := url.Values{
+			"name_sf":           {query},
+			"type_sf":           {"any"},
+			"any_obj_filter_sf": {"2"},
+		}
+		u := slclient.BuildURL(journeyPlannerBase, "/v2/stop-finder", params)
+		body, errResult := fetchJSONRaw(ctx, client, u)
+		if errResult != nil {
+			return errResult, nil
+		}
+
+		out, err := buildResolveResponse(body)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to reshape resolve response: %v", err)), nil
+		}
+		return mcp.NewToolResultText(string(out)), nil
+	}
+
+	return tool, handler
+}
+
 func StopFinderTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("stop_finder",
 		mcp.WithDescription("Fuzzy, ranked search for SL stops/stations/addresses by name. Tolerates typos and partial names and returns candidates ordered by match_quality — intended for resolving free-form user input before calling trips. Returns a flat JSON array of {id, name, lat, lon, match_quality, type}; id is the upstream 16-digit GID string which departures accepts directly. Non-stop entries (type != \"stop\") are kept so addresses and POIs can still be resolved. For enumerating the canonical site catalog or looking up a numeric site_id for departures, use sites instead."),

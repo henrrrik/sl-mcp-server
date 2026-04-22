@@ -170,3 +170,25 @@ func coerceSiteIDArg(v any) string {
 		return ""
 	}
 }
+
+// formatSiteIDArgForError renders the raw argument as a string suitable
+// for echoing back in a siteID error payload. Uses integer or fixed-point
+// form for numeric values so 9091001000009702 doesn't come back as
+// "9.091001000009702e+15" after the default %v formatter.
+func formatSiteIDArgForError(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case float64:
+		// Preserve the exact decimal representation without scientific
+		// notation. ParseFloat/FormatFloat round-trip keeps the value
+		// identical for values that were themselves representable.
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(t)
+	case int64:
+		return strconv.FormatInt(t, 10)
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}

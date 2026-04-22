@@ -113,7 +113,7 @@ func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 		}
 		input := coerceSiteIDArg(raw)
 		if input == "" {
-			return mcp.NewToolResultError((&siteIDError{Code: errInvalidSiteIDFormat, Input: fmt.Sprintf("%v", raw)}).asJSON()), nil
+			return mcp.NewToolResultError((&siteIDError{Code: errInvalidSiteIDFormat, Input: formatSiteIDArgForError(raw)}).asJSON()), nil
 		}
 		siteID, err := normalizeSiteID(input)
 		if err != nil {

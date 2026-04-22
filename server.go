@@ -26,6 +26,7 @@ func NewSLServer(client slclient.HTTPDoer) *server.MCPServer {
 	add(tools.DeviationsTool(client))
 	add(tools.SystemInfoTool(client))
 	add(tools.StopFinderTool(client))
+	add(tools.ResolveTool(client))
 	add(tools.TripsTool(client))
 	add(tools.SitesTool(client))
 	add(tools.DeparturesTool(client))
