@@ -641,6 +641,43 @@ func stopFinderResponse(names ...string) string {
 	return string(out)
 }
 
+// stopFinderResponseWithQualities builds a stop-finder response from explicit
+// (name, matchQuality) pairs so tests can exercise the exact-match
+// short-circuit thresholds directly.
+func stopFinderResponseWithQualities(pairs ...stopFinderPair) string {
+	type loc struct {
+		Coord            []float64         `json:"coord"`
+		DisassembledName string            `json:"disassembledName"`
+		ID               string            `json:"id"`
+		MatchQuality     int               `json:"matchQuality"`
+		Name             string            `json:"name"`
+		Parent           map[string]string `json:"parent"`
+		Type             string            `json:"type"`
+	}
+	type body struct {
+		Locations []loc `json:"locations"`
+	}
+	b := body{}
+	for i, p := range pairs {
+		b.Locations = append(b.Locations, loc{
+			Coord:            []float64{59.0 + float64(i)*0.01, 18.0 + float64(i)*0.01},
+			DisassembledName: p.Name,
+			ID:               fmt.Sprintf("909100100000%04d", 9000+i),
+			MatchQuality:     p.Quality,
+			Name:             "Stockholm, " + p.Name,
+			Parent:           map[string]string{"name": "Stockholm", "type": "locality"},
+			Type:             "stop",
+		})
+	}
+	out, _ := json.Marshal(b)
+	return string(out)
+}
+
+type stopFinderPair struct {
+	Name    string
+	Quality int
+}
+
 func TestTripsTool_AmbiguousOriginReturnsCandidates(t *testing.T) {
 	tripsErr := `{"systemMessages":[{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"}]}`
 
@@ -1806,6 +1843,224 @@ func TestTripsTool_PoiGuardSkippedWhenIDProvided(t *testing.T) {
 
 	if strings.Contains(text, "_not_a_stop") {
 		t.Errorf("when origin_id was provided, POI guard should not trigger; got %.300s", text)
+	}
+}
+
+// P1: when stop-finder returns one exact match (quality 1000) and the
+// next-best is meaningfully lower, auto-pick the exact match instead of
+// erroring as ambiguous. Preserve the shadowed list in a warning.
+func TestTripsTool_ExactMatchShadowsShorterSuffix(t *testing.T) {
+	tripsErr := `{"systemMessages":[{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"}]}`
+	tripsOK := loadTestData(t, "trips.json")
+
+	// Solna station (exact 1000) vs Solna station norra (850) + Ulriksdals station (780).
+	finder := stopFinderResponseWithQualities(
+		stopFinderPair{Name: "Solna station", Quality: 1000},
+		stopFinderPair{Name: "Solna station norra", Quality: 850},
+		stopFinderPair{Name: "Ulriksdals station", Quality: 780},
+	)
+
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", queryMatches: map[string]string{"name_origin": "Solna station"}, body: tripsErr},
+		{pathContains: "/v2/trips", body: tripsOK},
+		{pathContains: "/v2/stop-finder", body: finder},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"origin": "Solna station", "destination": "T-Centralen", "skip_deviations": true,
+	}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	if strings.Contains(text, "ambiguous_") {
+		t.Errorf("exact match should auto-resolve, not error; got %.300s", text)
+	}
+
+	var out struct {
+		Journeys []json.RawMessage `json:"journeys"`
+		Warnings []struct {
+			Code     string              `json:"code"`
+			Side     string              `json:"side"`
+			Query    string              `json:"query"`
+			Picked   *locationCandidate  `json:"picked"`
+			Shadowed []locationCandidate `json:"shadowed"`
+		} `json:"warnings"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v\n%s", err, text)
+	}
+	if len(out.Journeys) == 0 {
+		t.Fatal("expected journeys from auto-resolve retry")
+	}
+	if len(out.Warnings) != 1 {
+		t.Fatalf("expected 1 warning, got %d: %+v", len(out.Warnings), out.Warnings)
+	}
+	w := out.Warnings[0]
+	if w.Code != "exact_match_shadowed" {
+		t.Errorf("expected code=exact_match_shadowed, got %q", w.Code)
+	}
+	if w.Side != "origin" {
+		t.Errorf("expected side=origin, got %q", w.Side)
+	}
+	if w.Picked == nil || w.Picked.Name != "Solna station" {
+		t.Errorf("expected picked=Solna station, got %+v", w.Picked)
+	}
+	if len(w.Shadowed) != 2 {
+		t.Errorf("expected 2 shadowed candidates, got %d", len(w.Shadowed))
+	}
+}
+
+// P1: when the gap between exact (1000) and next-best (950) is less than
+// the required delta of 100, the match isn't "clear enough" — fall back to
+// the ambiguity picker.
+func TestTripsTool_ExactMatchNarrowGapStillAmbiguous(t *testing.T) {
+	tripsErr := `{"systemMessages":[{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"}]}`
+
+	finder := stopFinderResponseWithQualities(
+		stopFinderPair{Name: "Jakobsberg", Quality: 1000},
+		stopFinderPair{Name: "Jakobsbergs centrum", Quality: 950},
+	)
+
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: tripsErr},
+		{pathContains: "/v2/stop-finder", body: finder},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"origin": "Jakobsberg", "destination": "Slussen",
+	}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Error string `json:"error"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if out.Error != "ambiguous_origin" {
+		t.Errorf("expected ambiguous_origin when top two are close (delta=50 < 100); got %q", out.Error)
+	}
+}
+
+// P1: two candidates both scoring 1000 (genuinely tied) still error — the
+// short-circuit requires a unique winner.
+func TestTripsTool_TiedTopScoresStillAmbiguous(t *testing.T) {
+	tripsErr := `{"systemMessages":[{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"}]}`
+
+	finder := stopFinderResponseWithQualities(
+		stopFinderPair{Name: "Centrum A", Quality: 1000},
+		stopFinderPair{Name: "Centrum B", Quality: 1000},
+	)
+
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: tripsErr},
+		{pathContains: "/v2/stop-finder", body: finder},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"origin": "Centrum", "destination": "Slussen",
+	}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Error string `json:"error"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if out.Error != "ambiguous_origin" {
+		t.Errorf("tied top scores should still error as ambiguous; got %q", out.Error)
+	}
+}
+
+// P1 helper: pickExactMatch unit tests
+func TestPickExactMatch(t *testing.T) {
+	cases := []struct {
+		name    string
+		cands   []locationCandidate
+		wantOK  bool
+		wantIdx int // index of winner in the input; only meaningful when wantOK
+	}{
+		{
+			name:   "empty list",
+			cands:  nil,
+			wantOK: false,
+		},
+		{
+			name:   "single candidate",
+			cands:  []locationCandidate{{Name: "a", MatchQuality: 1000}},
+			wantOK: false, // single candidate handled earlier in the pipeline
+		},
+		{
+			name: "clear winner",
+			cands: []locationCandidate{
+				{Name: "exact", MatchQuality: 1000},
+				{Name: "shadow", MatchQuality: 850},
+			},
+			wantOK:  true,
+			wantIdx: 0,
+		},
+		{
+			name: "winner not first position",
+			cands: []locationCandidate{
+				{Name: "shadow", MatchQuality: 850},
+				{Name: "exact", MatchQuality: 1000},
+			},
+			wantOK:  true,
+			wantIdx: 1,
+		},
+		{
+			name: "narrow gap",
+			cands: []locationCandidate{
+				{Name: "a", MatchQuality: 1000},
+				{Name: "b", MatchQuality: 950},
+			},
+			wantOK: false,
+		},
+		{
+			name: "tied at 1000",
+			cands: []locationCandidate{
+				{Name: "a", MatchQuality: 1000},
+				{Name: "b", MatchQuality: 1000},
+			},
+			wantOK: false,
+		},
+		{
+			name: "best below 1000",
+			cands: []locationCandidate{
+				{Name: "a", MatchQuality: 950},
+				{Name: "b", MatchQuality: 800},
+			},
+			wantOK: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			picked, shadowed, ok := pickExactMatch(tc.cands)
+			if ok != tc.wantOK {
+				t.Fatalf("ok=%v, want %v", ok, tc.wantOK)
+			}
+			if !ok {
+				return
+			}
+			if picked.Name != tc.cands[tc.wantIdx].Name {
+				t.Errorf("picked=%q, want %q", picked.Name, tc.cands[tc.wantIdx].Name)
+			}
+			if len(shadowed) != len(tc.cands)-1 {
+				t.Errorf("shadowed=%d, want %d", len(shadowed), len(tc.cands)-1)
+			}
+		})
 	}
 }
 

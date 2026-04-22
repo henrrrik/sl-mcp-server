@@ -121,7 +121,7 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 			return fetchVerboseTrips(ctx, client, params)
 		}
 
-		body, errResult := fetchTripsWithAmbiguityResolution(ctx, client, params, origin, destination, originProvidedAsName, destProvidedAsName)
+		body, warnings, errResult := fetchTripsWithAmbiguityResolution(ctx, client, params, origin, destination, originProvidedAsName, destProvidedAsName)
 		if errResult != nil {
 			return errResult, nil
 		}
@@ -137,6 +137,7 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 		}
 
 		tt.Resolved = extractResolved(body)
+		tt.Warnings = warnings
 
 		if !request.GetBool("skip_deviations", false) {
 			enrichWithDeviations(ctx, client, tt)
@@ -212,8 +213,9 @@ func enrichWithDeviations(ctx context.Context, client slclient.HTTPDoer, tt *tri
 
 // fetchTripsWithAmbiguityResolution fetches /v2/trips. When the broker reports
 // ambiguity, it calls stop-finder for each ambiguous side in parallel and:
-//   - if every ambiguous side resolves to exactly one stop candidate, silently
-//     re-fetches /v2/trips with those IDs and returns the resulting body;
+//   - if every ambiguous side resolves to exactly one stop candidate (or an
+//     exact-match short-circuit wins), silently re-fetches /v2/trips with
+//     those IDs and returns the resulting body;
 //   - if all resolved candidates on a side are non-stops (POIs, addresses,
 //     localities), returns origin_not_a_stop / destination_not_a_stop so the
 //     caller can't silently plan from the wrong place;
@@ -221,24 +223,26 @@ func enrichWithDeviations(ctx context.Context, client slclient.HTTPDoer, tt *tri
 //     that still require user disambiguation.
 //
 // originByName / destByName indicate whether the side was supplied by name
-// (and thus subject to the fuzzy-match drift guard) or by id.
-func fetchTripsWithAmbiguityResolution(ctx context.Context, client slclient.HTTPDoer, params url.Values, origin, destination string, originByName, destByName bool) ([]byte, *mcp.CallToolResult) {
+// (and thus subject to the fuzzy-match drift guard) or by id. Warnings
+// collected during ambiguity resolution (e.g. exact-match shadowing) are
+// returned alongside the body for the caller to attach.
+func fetchTripsWithAmbiguityResolution(ctx context.Context, client slclient.HTTPDoer, params url.Values, origin, destination string, originByName, destByName bool) ([]byte, []tripWarning, *mcp.CallToolResult) {
 	u := slclient.BuildURL(journeyPlannerBase, "/v2/trips", params)
 	body, errResult := fetchJSONRaw(ctx, client, u)
 	if errResult != nil {
-		return nil, errResult
+		return nil, nil, errResult
 	}
 
 	// Defensive POI guard: even when upstream returned journeys, fuzzy name
 	// matching may have quietly resolved the origin/destination onto a POI
 	// or address (e.g. "Järfälla kyrka" → "Järfälla Hyrkart").
 	if errResult := rejectPoiResolutionIfNeeded(body, originByName, destByName); errResult != nil {
-		return nil, errResult
+		return nil, nil, errResult
 	}
 
 	originAmb, destAmb := ambiguousByNameSide(body, originByName, destByName)
 	if !originAmb && !destAmb {
-		return body, nil
+		return body, nil, nil
 	}
 	return resolveAmbiguity(ctx, client, params, origin, destination, originAmb, destAmb)
 }
@@ -260,38 +264,73 @@ func ambiguousByNameSide(body []byte, originByName, destByName bool) (originAmb,
 
 // resolveAmbiguity handles the stop-finder-and-retry path once we know at
 // least one side is ambiguous. It either returns the retried /v2/trips body
-// on successful auto-resolve, a not-a-stop error for POI-only candidates,
-// or a picker error listing the remaining stop candidates.
-func resolveAmbiguity(ctx context.Context, client slclient.HTTPDoer, params url.Values, origin, destination string, originAmb, destAmb bool) ([]byte, *mcp.CallToolResult) {
+// on successful auto-resolve (with any exact-match shadowing warnings), a
+// not-a-stop error for POI-only candidates, or a picker error listing the
+// remaining stop candidates.
+func resolveAmbiguity(ctx context.Context, client slclient.HTTPDoer, params url.Values, origin, destination string, originAmb, destAmb bool) ([]byte, []tripWarning, *mcp.CallToolResult) {
 	oc, dc := fetchCandidatesInParallel(ctx, client, origin, destination, originAmb, destAmb)
 	ocStops, ocAll := splitStopCandidates(oc)
 	dcStops, dcAll := splitStopCandidates(dc)
 
 	if originAmb && len(ocStops) == 0 && len(ocAll) > 0 {
-		return nil, buildNotAStopResult("origin_not_a_stop", origin, ocAll)
+		return nil, nil, buildNotAStopResult("origin_not_a_stop", origin, ocAll)
 	}
 	if destAmb && len(dcStops) == 0 && len(dcAll) > 0 {
-		return nil, buildNotAStopResult("destination_not_a_stop", destination, dcAll)
+		return nil, nil, buildNotAStopResult("destination_not_a_stop", destination, dcAll)
 	}
 
-	originNeedsPicker := originAmb && len(ocStops) != 1
-	destNeedsPicker := destAmb && len(dcStops) != 1
+	var warnings []tripWarning
+	ocPicked, ocWarn, ocOK := resolveSide("origin", origin, originAmb, ocStops)
+	if ocWarn != nil {
+		warnings = append(warnings, *ocWarn)
+	}
+	dcPicked, dcWarn, dcOK := resolveSide("destination", destination, destAmb, dcStops)
+	if dcWarn != nil {
+		warnings = append(warnings, *dcWarn)
+	}
+
+	originNeedsPicker := originAmb && !ocOK
+	destNeedsPicker := destAmb && !dcOK
 	if originNeedsPicker || destNeedsPicker {
-		return nil, buildAmbiguityErrorResult(origin, destination, originNeedsPicker, destNeedsPicker, ocStops, dcStops)
+		return nil, nil, buildAmbiguityErrorResult(origin, destination, originNeedsPicker, destNeedsPicker, ocStops, dcStops)
 	}
 
 	if originAmb {
-		params.Set("name_origin", ocStops[0].ID)
+		params.Set("name_origin", ocPicked.ID)
 	}
 	if destAmb {
-		params.Set("name_destination", dcStops[0].ID)
+		params.Set("name_destination", dcPicked.ID)
 	}
 	u := slclient.BuildURL(journeyPlannerBase, "/v2/trips", params)
 	body, errResult := fetchJSONRaw(ctx, client, u)
 	if errResult != nil {
-		return nil, errResult
+		return nil, nil, errResult
 	}
-	return body, nil
+	return body, warnings, nil
+}
+
+// resolveSide decides what to do with the stop-typed candidates for one
+// side when the broker flagged it as ambiguous. Returns (picked, warning,
+// ok) where picked is the candidate to auto-retry with, warning is the
+// exact-match shadow notice (nil when not applicable), and ok is false
+// when the caller should fall back to the ambiguity picker.
+func resolveSide(side, query string, ambiguous bool, stops []locationCandidate) (*locationCandidate, *tripWarning, bool) {
+	if !ambiguous {
+		return nil, nil, true
+	}
+	if len(stops) == 1 {
+		return &stops[0], nil, true
+	}
+	if picked, shadowed, ok := pickExactMatch(stops); ok {
+		return picked, &tripWarning{
+			Code:     "exact_match_shadowed",
+			Side:     side,
+			Query:    query,
+			Picked:   picked,
+			Shadowed: shadowed,
+		}, true
+	}
+	return nil, nil, false
 }
 
 // splitStopCandidates partitions the candidates into (stops, all) where

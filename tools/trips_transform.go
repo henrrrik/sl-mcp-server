@@ -80,6 +80,19 @@ type trimmedTrips struct {
 	Journeys       []trimmedJourney  `json:"journeys"`
 	SystemMessages []json.RawMessage `json:"systemMessages,omitempty"`
 	Resolved       *resolvedTrip     `json:"resolved,omitempty"`
+	Warnings       []tripWarning     `json:"warnings,omitempty"`
+}
+
+// tripWarning surfaces non-fatal disambiguation notices — e.g. an exact-name
+// match was picked over close-but-lower-quality shadows. The caller can
+// still inspect the shadowed candidates and retry with a different name
+// or an explicit id.
+type tripWarning struct {
+	Code     string              `json:"code"`
+	Side     string              `json:"side,omitempty"`
+	Query    string              `json:"query,omitempty"`
+	Picked   *locationCandidate  `json:"picked,omitempty"`
+	Shadowed []locationCandidate `json:"shadowed,omitempty"`
 }
 
 // resolvedTrip echoes the actual origin/destination the planner used, so
@@ -357,11 +370,12 @@ func detectAmbiguity(raw []byte) (originAmbiguous, destinationAmbiguous bool) {
 
 // locationCandidate is the outward shape for a disambiguation suggestion.
 type locationCandidate struct {
-	Name     string    `json:"name"`
-	Locality string    `json:"locality,omitempty"`
-	ID       string    `json:"id"`
-	Type     string    `json:"type,omitempty"`
-	Coord    []float64 `json:"coord,omitempty"`
+	Name         string    `json:"name"`
+	Locality     string    `json:"locality,omitempty"`
+	ID           string    `json:"id"`
+	Type         string    `json:"type,omitempty"`
+	Coord        []float64 `json:"coord,omitempty"`
+	MatchQuality int       `json:"match_quality,omitempty"`
 }
 
 type ambiguitySingleResponse struct {
@@ -617,6 +631,7 @@ func resolveCandidates(ctx context.Context, client slclient.HTTPDoer, query stri
 			Coord            []float64 `json:"coord"`
 			DisassembledName string    `json:"disassembledName"`
 			ID               string    `json:"id"`
+			MatchQuality     int       `json:"matchQuality"`
 			Name             string    `json:"name"`
 			Parent           struct {
 				Name string `json:"name"`
@@ -640,12 +655,64 @@ func resolveCandidates(ctx context.Context, client slclient.HTTPDoer, query stri
 			name = loc.Name
 		}
 		out[i] = locationCandidate{
-			Name:     name,
-			Locality: loc.Parent.Name,
-			ID:       loc.ID,
-			Type:     loc.Type,
-			Coord:    loc.Coord,
+			Name:         name,
+			Locality:     loc.Parent.Name,
+			ID:           loc.ID,
+			Type:         loc.Type,
+			Coord:        loc.Coord,
+			MatchQuality: loc.MatchQuality,
 		}
 	}
 	return out, nil
+}
+
+// Exact-match short-circuit thresholds. Upstream tags an exact stop-name
+// hit as matchQuality 1000; shadowing candidates typically score 700–900.
+// We require at least a 100-point gap between the exact match and the
+// next-best candidate before auto-picking, so "Slussen" wins over the
+// 850-quality "Slussplan" but a pair tied at 1000 still errors as
+// ambiguous (which shouldn't happen in practice — upstream would have
+// returned journeys for the first).
+const (
+	exactMatchQualityMin = 1000
+	exactMatchQualityGap = 100
+)
+
+// pickExactMatch returns the single candidate that qualifies as an exact
+// name match (match_quality >= exactMatchQualityMin and strictly higher
+// than every other candidate by at least exactMatchQualityGap). Returns
+// (nil, _, false) when no candidate qualifies.
+//
+// The second return value is the remaining candidates — what would have
+// been offered as an ambiguity picker — so callers can attach them as a
+// "shadowed" warning on the successful response.
+func pickExactMatch(cands []locationCandidate) (*locationCandidate, []locationCandidate, bool) {
+	if len(cands) < 2 {
+		return nil, nil, false
+	}
+	var bestIdx = -1
+	var bestQ, secondQ int
+	for i, c := range cands {
+		if c.MatchQuality > bestQ {
+			secondQ = bestQ
+			bestQ = c.MatchQuality
+			bestIdx = i
+			continue
+		}
+		if c.MatchQuality > secondQ {
+			secondQ = c.MatchQuality
+		}
+	}
+	if bestIdx < 0 || bestQ < exactMatchQualityMin || bestQ-secondQ < exactMatchQualityGap {
+		return nil, nil, false
+	}
+	winner := cands[bestIdx]
+	shadowed := make([]locationCandidate, 0, len(cands)-1)
+	for i, c := range cands {
+		if i == bestIdx {
+			continue
+		}
+		shadowed = append(shadowed, c)
+	}
+	return &winner, shadowed, true
 }
