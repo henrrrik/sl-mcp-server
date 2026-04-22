@@ -542,6 +542,247 @@ func TestLinesTool_TransportAuthorityIDOverride(t *testing.T) {
 	}
 }
 
+func TestLinesTool_NoParamsReturnsFlatArrayOfAll(t *testing.T) {
+	body := loadTestData(t, "lines.json")
+	mock := newMockDoer(body)
+
+	_, handler := LinesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var lines []map[string]any
+	if err := json.Unmarshal([]byte(text), &lines); err != nil {
+		t.Fatalf("expected flat array, got: %v\n%s", err, text)
+	}
+	// Fixture: 3 metro + 3 bus + 2 tram + 1 train + 1 ferry = 10.
+	if len(lines) != 10 {
+		t.Errorf("expected 10 lines from fixture, got %d", len(lines))
+	}
+}
+
+func TestLinesTool_QueryFiltersByName(t *testing.T) {
+	body := loadTestData(t, "lines.json")
+	mock := newMockDoer(body)
+
+	_, handler := LinesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": "röda"}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var lines []map[string]any
+	if err := json.Unmarshal([]byte(text), &lines); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(lines) != 2 {
+		t.Errorf("expected 2 Röda linjen entries, got %d: %v", len(lines), lines)
+	}
+	for _, l := range lines {
+		if l["transport_mode"] != "METRO" {
+			t.Errorf("expected METRO mode, got %v", l["transport_mode"])
+		}
+	}
+}
+
+func TestLinesTool_QueryMatchesDesignation(t *testing.T) {
+	body := loadTestData(t, "lines.json")
+	mock := newMockDoer(body)
+
+	_, handler := LinesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": "471"}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var lines []map[string]any
+	if err := json.Unmarshal([]byte(text), &lines); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 match on designation 471, got %d: %v", len(lines), lines)
+	}
+	if lines[0]["designation"] != "471" {
+		t.Errorf("expected designation 471, got %v", lines[0]["designation"])
+	}
+}
+
+func TestLinesTool_LimitTruncates(t *testing.T) {
+	body := loadTestData(t, "lines.json")
+	mock := newMockDoer(body)
+
+	_, handler := LinesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"limit": float64(3)}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var lines []map[string]any
+	if err := json.Unmarshal([]byte(text), &lines); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(lines) != 3 {
+		t.Errorf("expected 3 lines after limit=3, got %d", len(lines))
+	}
+}
+
+func TestLinesTool_QueryAndLimit(t *testing.T) {
+	body := loadTestData(t, "lines.json")
+	mock := newMockDoer(body)
+
+	_, handler := LinesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": "röda", "limit": float64(1)}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var lines []map[string]any
+	if err := json.Unmarshal([]byte(text), &lines); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(lines) != 1 {
+		t.Errorf("expected 1 line after query=röda + limit=1, got %d", len(lines))
+	}
+}
+
+func TestLinesTool_TransportModeFilter(t *testing.T) {
+	body := loadTestData(t, "lines.json")
+	mock := newMockDoer(body)
+
+	_, handler := LinesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"transport_mode": "metro"}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var lines []map[string]any
+	if err := json.Unmarshal([]byte(text), &lines); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(lines) != 3 {
+		t.Errorf("expected 3 metro lines, got %d", len(lines))
+	}
+	for _, l := range lines {
+		if l["transport_mode"] != "METRO" {
+			t.Errorf("expected transport_mode METRO, got %v", l["transport_mode"])
+		}
+	}
+}
+
+func TestLinesTool_TransportModeCaseInsensitive(t *testing.T) {
+	body := loadTestData(t, "lines.json")
+	mock := newMockDoer(body)
+
+	_, handler := LinesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"transport_mode": "METRO"}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var lines []map[string]any
+	if err := json.Unmarshal([]byte(text), &lines); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(lines) != 3 {
+		t.Errorf("expected 3 metro lines (case-insensitive), got %d", len(lines))
+	}
+}
+
+func TestLinesTool_TransportModeUnknownReturnsEmpty(t *testing.T) {
+	body := loadTestData(t, "lines.json")
+	mock := newMockDoer(body)
+
+	_, handler := LinesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"transport_mode": "hovercraft"}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unknown mode should return empty array, not error: %s",
+			result.Content[0].(mcp.TextContent).Text)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var lines []map[string]any
+	if err := json.Unmarshal([]byte(text), &lines); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(lines) != 0 {
+		t.Errorf("expected empty array for unknown mode, got %d entries", len(lines))
+	}
+}
+
+func TestLinesTool_AllFiltersCombined(t *testing.T) {
+	body := loadTestData(t, "lines.json")
+	mock := newMockDoer(body)
+
+	_, handler := LinesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"transport_mode": "bus",
+		"query":          "sluss",
+		"limit":          float64(5),
+	}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var lines []map[string]any
+	if err := json.Unmarshal([]byte(text), &lines); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 bus+sluss match, got %d: %v", len(lines), lines)
+	}
+	if lines[0]["name"] != "Slussen-Saltsjöbaden" {
+		t.Errorf("expected Slussen-Saltsjöbaden, got %v", lines[0]["name"])
+	}
+}
+
 func TestStopPointsTool(t *testing.T) {
 	body := loadTestData(t, "stop_points.json")
 	mock := newMockDoer(body)

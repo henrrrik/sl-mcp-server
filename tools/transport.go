@@ -133,15 +133,31 @@ func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 
 func LinesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("lines",
-		mcp.WithDescription("List SL transit lines"),
+		mcp.WithDescription("Enumerate SL's catalog of transit lines and their canonical numeric ids. Returns a flat JSON array of line objects (upstream groups them by mode, but each object carries transport_mode so the grouping adds no information). Combine transport_mode, query, and limit to narrow the result."),
 		mcp.WithNumber("transport_authority_id", mcp.Description("Transport authority ID from the transport_authorities tool. Defaults to 1 (Storstockholms Lokaltrafik).")),
+		mcp.WithString("transport_mode", mcp.Description("Restrict to a single mode (case-insensitive): metro, bus, tram, train, ferry, ship, taxi. Unknown modes return an empty array.")),
+		mcp.WithString("query", mcp.Description("Case-insensitive substring match on line name OR designation. Example: 'röda' matches the Red metro lines; '471' matches bus 471 via its designation.")),
+		mcp.WithNumber("limit", mcp.Description("Maximum number of lines to return. Omitted or 0 means no limit.")),
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		authorityID := request.GetInt("transport_authority_id", 1)
+		transportMode := request.GetString("transport_mode", "")
+		query := request.GetString("query", "")
+		limit := request.GetInt("limit", 0)
+
 		params := url.Values{"transport_authority_id": {fmt.Sprintf("%d", authorityID)}}
 		u := slclient.BuildURL(transportBase, "/v1/lines", params)
-		return fetchJSON(ctx, client, u)
+
+		body, errResult := fetchJSONRaw(ctx, client, u)
+		if errResult != nil {
+			return errResult, nil
+		}
+		filtered, err := flattenAndFilterLines(body, transportMode, query, limit)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to reshape lines response: %v", err)), nil
+		}
+		return mcp.NewToolResultText(string(filtered)), nil
 	}
 
 	return tool, handler

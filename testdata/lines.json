@@ -1,1 +1,107 @@
-[{"id": 1, "designation": "1", "transport_mode": "BUS", "group_of_lines": "blåbuss"}]
+{
+  "metro": [
+    {
+      "id": 10,
+      "gid": 9011001001000000,
+      "name": "Blå linjen",
+      "designation": "10",
+      "transport_mode": "METRO",
+      "group_of_lines": "tunnelbanans blå linje",
+      "transport_authority": {"id": 1, "name": "Storstockholms Lokaltrafik"},
+      "valid": {"from": "2007-08-24T00:00:00"}
+    },
+    {
+      "id": 13,
+      "gid": 9011001013000000,
+      "name": "Röda linjen",
+      "designation": "13",
+      "transport_mode": "METRO",
+      "group_of_lines": "tunnelbanans röda linje",
+      "transport_authority": {"id": 1, "name": "Storstockholms Lokaltrafik"},
+      "valid": {"from": "2007-08-24T00:00:00"}
+    },
+    {
+      "id": 14,
+      "gid": 9011001014000000,
+      "name": "Röda linjen",
+      "designation": "14",
+      "transport_mode": "METRO",
+      "group_of_lines": "tunnelbanans röda linje",
+      "transport_authority": {"id": 1, "name": "Storstockholms Lokaltrafik"},
+      "valid": {"from": "2007-08-24T00:00:00"}
+    }
+  ],
+  "bus": [
+    {
+      "id": 4,
+      "gid": 9011001004000000,
+      "name": "Gullmarsplan-Radiohuset",
+      "designation": "4",
+      "transport_mode": "BUS",
+      "group_of_lines": "blåbuss",
+      "transport_authority": {"id": 1, "name": "Storstockholms Lokaltrafik"},
+      "valid": {"from": "2007-08-24T00:00:00"}
+    },
+    {
+      "id": 471,
+      "gid": 9011001471000000,
+      "name": "Slussen-Saltsjöbaden",
+      "designation": "471",
+      "transport_mode": "BUS",
+      "group_of_lines": "blåbuss",
+      "transport_authority": {"id": 1, "name": "Storstockholms Lokaltrafik"},
+      "valid": {"from": "2007-08-24T00:00:00"}
+    },
+    {
+      "id": 55,
+      "gid": 9011001055000000,
+      "name": "Hjorthagen-Tanto",
+      "designation": "55",
+      "transport_mode": "BUS",
+      "transport_authority": {"id": 1, "name": "Storstockholms Lokaltrafik"},
+      "valid": {"from": "2007-08-24T00:00:00"}
+    }
+  ],
+  "tram": [
+    {
+      "id": 22,
+      "gid": 9011001022000000,
+      "name": "Tvärbanan",
+      "designation": "22",
+      "transport_mode": "TRAM",
+      "transport_authority": {"id": 1, "name": "Storstockholms Lokaltrafik"},
+      "valid": {"from": "2007-08-24T00:00:00"}
+    },
+    {
+      "id": 7,
+      "gid": 9011001007000000,
+      "name": "Spårväg City",
+      "designation": "7",
+      "transport_mode": "TRAM",
+      "transport_authority": {"id": 1, "name": "Storstockholms Lokaltrafik"},
+      "valid": {"from": "2007-08-24T00:00:00"}
+    }
+  ],
+  "train": [
+    {
+      "id": 40,
+      "gid": 9011001040000000,
+      "name": "Pendeltåg",
+      "designation": "40",
+      "transport_mode": "TRAIN",
+      "transport_authority": {"id": 1, "name": "Storstockholms Lokaltrafik"},
+      "valid": {"from": "2007-08-24T00:00:00"}
+    }
+  ],
+  "ferry": [
+    {
+      "id": 80,
+      "gid": 9011001080000000,
+      "name": "Sjövägen",
+      "designation": "80",
+      "transport_mode": "FERRY",
+      "transport_authority": {"id": 1, "name": "Storstockholms Lokaltrafik"},
+      "valid": {"from": "2007-08-24T00:00:00"}
+    }
+  ]
+}
