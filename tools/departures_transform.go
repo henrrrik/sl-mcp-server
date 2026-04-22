@@ -2,8 +2,19 @@ package tools
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
+
+// departuresFilters is applied after the upstream fetch — SL's /v1/sites/:id/departures
+// doesn't accept these as query params, so we filter the returned array
+// in-process. Empty / zero fields mean "no restriction".
+type departuresFilters struct {
+	transportMode string // lowercased: matches line.transport_mode case-insensitively
+	line          string // lowercased: exact match on line.designation
+	directionCode int    // 0 = all, 1 / 2 = the upstream's direction codes
+	limit         int    // 0 = no truncation
+}
 
 // trimDepartures reshapes a /v1/sites/{id}/departures response for a specific
 // site. The upstream's stop_deviations selection is unreliable — it attaches
@@ -23,12 +34,23 @@ import (
 //
 // Either way, scope.stop_points is dropped (noisy, not useful after the site
 // has been determined) and broken "null/..." href values are stripped.
-func trimDepartures(depBody, msgsBody []byte) ([]byte, error) {
+//
+// The `filters` argument applies transport_mode / line / direction_code /
+// limit to the departures array before the response is marshaled. Zero-
+// valued fields are ignored — the default is "no filtering".
+func trimDepartures(depBody, msgsBody []byte, filters departuresFilters) ([]byte, error) {
 	var root map[string]any
 	if err := json.Unmarshal(depBody, &root); err != nil {
 		return nil, err
 	}
 
+	if deps, ok := root["departures"].([]any); ok {
+		root["departures"] = applyDeparturesFilters(deps, filters)
+	}
+
+	// Re-derive the site identity AFTER filtering so stop_deviations reflect
+	// only the lines / stop_areas that survive. This prevents a line-43
+	// deviation from appearing on a "line=40" filtered response.
 	site := collectSiteIdentity(root)
 
 	var stopDeviations []any
@@ -44,6 +66,55 @@ func trimDepartures(depBody, msgsBody []byte) ([]byte, error) {
 	stripStopDeviationNoise(stopDeviations)
 	root["stop_deviations"] = stopDeviations
 	return json.Marshal(root)
+}
+
+// applyDeparturesFilters keeps only the departures that match every active
+// filter. Malformed rows pass through unchanged so one bad upstream row
+// doesn't sneak past (conservative — we'd rather show a noisy row than
+// silently drop a departure).
+func applyDeparturesFilters(deps []any, f departuresFilters) []any {
+	if f.transportMode == "" && f.line == "" && f.directionCode == 0 && f.limit <= 0 {
+		return deps
+	}
+	out := make([]any, 0, len(deps))
+	for _, depAny := range deps {
+		dep, ok := depAny.(map[string]any)
+		if !ok {
+			out = append(out, depAny)
+			continue
+		}
+		if !departureMatches(dep, f) {
+			continue
+		}
+		out = append(out, dep)
+		if f.limit > 0 && len(out) >= f.limit {
+			break
+		}
+	}
+	return out
+}
+
+func departureMatches(dep map[string]any, f departuresFilters) bool {
+	line, _ := dep["line"].(map[string]any)
+
+	if f.transportMode != "" {
+		mode, _ := line["transport_mode"].(string)
+		if !strings.EqualFold(mode, f.transportMode) {
+			return false
+		}
+	}
+	if f.line != "" {
+		designation, _ := line["designation"].(string)
+		if !strings.EqualFold(designation, f.line) {
+			return false
+		}
+	}
+	if f.directionCode != 0 {
+		if dc, _ := dep["direction_code"].(float64); int(dc) != f.directionCode {
+			return false
+		}
+	}
+	return true
 }
 
 // siteIdentity is the set of identifiers that define "this site" for the
