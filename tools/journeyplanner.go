@@ -33,7 +33,7 @@ func SystemInfoTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 
 func StopFinderTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("stop_finder",
-		mcp.WithDescription("Fuzzy, ranked search for SL stops/stations/addresses by name. Tolerates typos and partial names and returns candidates ordered by match quality — intended for resolving free-form user input before calling trips. For enumerating the canonical site catalog or looking up a numeric site_id for departures, use sites instead."),
+		mcp.WithDescription("Fuzzy, ranked search for SL stops/stations/addresses by name. Tolerates typos and partial names and returns candidates ordered by match_quality — intended for resolving free-form user input before calling trips. Returns a flat JSON array of {id, name, lat, lon, match_quality, type}; id is the upstream 16-digit GID string which departures accepts directly. Non-stop entries (type != \"stop\") are kept so addresses and POIs can still be resolved. For enumerating the canonical site catalog or looking up a numeric site_id for departures, use sites instead."),
 		mcp.WithString("name", mcp.Required(), mcp.Description("Free-form name or partial name to search for. Fuzzy matching is applied.")),
 	)
 
@@ -50,7 +50,15 @@ func StopFinderTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 		}
 
 		u := slclient.BuildURL(journeyPlannerBase, "/v2/stop-finder", params)
-		return fetchJSON(ctx, client, u)
+		body, errResult := fetchJSONRaw(ctx, client, u)
+		if errResult != nil {
+			return errResult, nil
+		}
+		trimmed, err := trimStopFinder(body)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to reshape stop_finder response: %v", err)), nil
+		}
+		return mcp.NewToolResultText(string(trimmed)), nil
 	}
 
 	return tool, handler
