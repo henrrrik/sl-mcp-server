@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.2.0
+
+### trips
+
+- Exact-match short-circuit: when stop-finder returns one candidate with
+  match_quality ≥ 1000 and the next-best is ≥ 100 points lower, the exact
+  match auto-resolves instead of erroring as ambiguous. "Solna station"
+  now plans on the first call even when "Solna station norra" is in the
+  candidate set. Genuine ties (e.g. "Jakobsberg" pendeltåg vs "Jakobsbergs
+  centrum" at comparable quality) still return ambiguous_origin.
+- Successful auto-resolves attach an `exact_match_shadowed` warning to the
+  response listing the lower-quality candidates that were skipped, so
+  callers can see what was shadowed and retry with a different name or an
+  explicit id if they meant something else.
+
 ## 1.1.0
 
 ### trips
