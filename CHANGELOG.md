@@ -22,6 +22,18 @@
 - stop_deviations are re-derived from the filtered departures, so a
   `line=40` query doesn't carry a deviation that only affects line 43.
 
+### lines
+
+- New `designation` filter: prefix match on the line designation. `"54"`
+  matches 54, 540, 541, 542, … without pulling in unrelated lines whose
+  name happens to contain "54".
+- New `group_of_lines` filter: case-insensitive substring match on the
+  upstream `group_of_lines` field. Useful for "all Pendeltåg", "all
+  Blåbuss", or "all Närtrafiken" shortcuts.
+- Default `limit` is now 50 (was unlimited). Pass `limit=0` for the full
+  catalog — the ~600-entry raw list is too big for typical LLM contexts.
+- Tool description updated to strongly hint at filter usage.
+
 ## 1.2.0
 
 ### trips
