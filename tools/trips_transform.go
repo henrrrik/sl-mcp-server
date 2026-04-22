@@ -109,12 +109,76 @@ func reshapeTrips(raw []byte) (*trimmedTrips, error) {
 
 	out := &trimmedTrips{
 		Journeys:       make([]trimmedJourney, len(up.Journeys)),
-		SystemMessages: up.SystemMessages,
+		SystemMessages: filterStaleBrokerMessages(up.SystemMessages),
 	}
 	for i, j := range up.Journeys {
 		out.Journeys[i] = trimJourney(j)
 	}
 	return out, nil
+}
+
+// stockholmLocation is the time zone SL operates in. Used to rewrite upstream
+// leg times (which JP emits in UTC) into local time with an explicit offset,
+// matching how every other timestamp in SL-land reads. Falls back to UTC if
+// the zone database isn't present (shouldn't happen on Runway's Go buildpack
+// but belt-and-braces on a helper this cheap).
+var stockholmLocation = func() *time.Location {
+	if loc, err := time.LoadLocation(stockholmTZ); err == nil {
+		return loc
+	}
+	return time.UTC
+}()
+
+// localizeTime parses an RFC3339 timestamp and re-emits it in Europe/Stockholm
+// with an explicit offset. Empty input returns empty; unparseable input is
+// passed through verbatim so upstream format drift surfaces rather than
+// silently drops the field.
+func localizeTime(ts string) string {
+	if ts == "" {
+		return ""
+	}
+	t, err := time.Parse(time.RFC3339, ts)
+	if err != nil {
+		return ts
+	}
+	return t.In(stockholmLocation).Format(time.RFC3339)
+}
+
+// filterStaleBrokerMessages drops the -8010/-8011 "origin:" / "destination:"
+// BROKER error messages that JP leaves on a successful /v2/trips response
+// even after ambiguity was auto-resolved. reshapeTrips is only called when
+// journeys exist, so any "couldn't resolve origin" message at this point is
+// stale — keeping it confuses callers into thinking their resolution failed.
+// Non-matching system messages pass through unchanged.
+func filterStaleBrokerMessages(raw []json.RawMessage) []json.RawMessage {
+	out := make([]json.RawMessage, 0, len(raw))
+	for _, m := range raw {
+		var msg struct {
+			Type   string `json:"type"`
+			Module string `json:"module"`
+			Code   int    `json:"code"`
+			Text   string `json:"text"`
+		}
+		if err := json.Unmarshal(m, &msg); err != nil {
+			out = append(out, m)
+			continue
+		}
+		if isStaleResolutionMessage(msg.Type, msg.Module, msg.Code, msg.Text) {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+func isStaleResolutionMessage(msgType, module string, code int, text string) bool {
+	if msgType != "error" || module != "BROKER" {
+		return false
+	}
+	if code != -8010 && code != -8011 {
+		return false
+	}
+	return strings.HasPrefix(text, "origin:") || strings.HasPrefix(text, "destination:")
 }
 
 func trimJourney(j upstreamJourney) trimmedJourney {
@@ -184,9 +248,9 @@ func mapMode(name string) string {
 
 func pickTime(estimated, planned string) string {
 	if estimated != "" {
-		return estimated
+		return localizeTime(estimated)
 	}
-	return planned
+	return localizeTime(planned)
 }
 
 // journeySummary joins transit legs with an arrow, skipping walking legs.
