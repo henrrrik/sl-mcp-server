@@ -6,8 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strconv"
-	"strings"
 
 	"github.com/henrrrik/sl-mcp-server/slclient"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -17,11 +15,6 @@ import (
 const transportBase = "https://transport.integration.sl.se"
 
 const maxResponseSize = 5 * 1024 * 1024 // 5MB
-
-// Real site IDs from /v1/sites fall in 102..9999. Stop-finder returns a
-// "180"-prefixed variant in properties.stopId (e.g. "18009192" = site 9192).
-// Any numeric ID above this range that starts with "180" is the prefixed form.
-const maxShortSiteID = 9999
 
 func fetchJSON(ctx context.Context, client slclient.HTTPDoer, rawURL string) (*mcp.CallToolResult, error) {
 	body, errResult := fetchJSONRaw(ctx, client, rawURL)
@@ -103,8 +96,8 @@ func SitesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 
 func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("departures",
-		mcp.WithDescription("Get real-time departures from an SL transit site. Accepts either the short site ID from the sites tool (e.g. 9192) or the 180-prefixed form from stop-finder (e.g. 18009192)."),
-		mcp.WithNumber("site_id", mcp.Required(), mcp.Description("Site ID. Short form (102-9999) or 180-prefixed form (e.g. 18009192).")),
+		mcp.WithDescription("Get real-time departures from an SL transit site. Use the sites tool to discover the id."),
+		mcp.WithNumber("site_id", mcp.Required(), mcp.Description("Site ID from the sites tool (e.g. 9192 for Slussen, 9001 for T-Centralen).")),
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -112,7 +105,6 @@ func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 		if siteID == 0 {
 			return mcp.NewToolResultError("site_id is required"), nil
 		}
-		siteID = normalizeSiteID(siteID)
 
 		params := url.Values{}
 		path := fmt.Sprintf("/v1/sites/%d/departures", siteID)
@@ -137,30 +129,6 @@ func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 	}
 
 	return tool, handler
-}
-
-// normalizeSiteID strips the "180" prefix returned by stop-finder's
-// properties.stopId so it matches the short form accepted by /v1/sites.
-// Only triggers on IDs outside the real short-id range (> 9999) to avoid
-// rewriting legitimate IDs like 1800-1809 (Sköndals area).
-func normalizeSiteID(id int) int {
-	if id <= maxShortSiteID {
-		return id
-	}
-	s := strconv.Itoa(id)
-	rest, ok := strings.CutPrefix(s, "180")
-	if !ok {
-		return id
-	}
-	rest = strings.TrimLeft(rest, "0")
-	if rest == "" {
-		return id
-	}
-	n, err := strconv.Atoi(rest)
-	if err != nil {
-		return id
-	}
-	return n
 }
 
 func LinesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
