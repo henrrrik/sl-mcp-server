@@ -96,7 +96,7 @@ func SitesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 
 func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("departures",
-		mcp.WithDescription("Get real-time departures from an SL transit site. Use the sites tool to discover the id."),
+		mcp.WithDescription("Get real-time departures from an SL transit site. The returned stop_deviations are rebuilt from /v1/messages, filtered to scopes that touch this site's stop_areas, stop_points, or lines, so the disruptions attached actually apply here — with a fallback to filtering upstream's raw list if /v1/messages is unreachable. Use the sites tool to discover the id."),
 		mcp.WithNumber("site_id", mcp.Required(), mcp.Description("Site ID from the sites tool (e.g. 9192 for Slussen, 9001 for T-Centralen).")),
 	)
 
