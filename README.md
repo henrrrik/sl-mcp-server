@@ -1,4 +1,4 @@
-# SL MCP Server
+# Storstockholms Lokaltrafik (SL) MCP Server
 [![Go Report Card](https://goreportcard.com/badge/github.com/henrrrik/sl-mcp-server)](https://goreportcard.com/report/github.com/henrrrik/sl-mcp-server)
 
 An [MCP](https://modelcontextprotocol.io/) server for Stockholm's public transit (SL). Gives AI assistants access to real-time departures, trip planning, deviations, and more via SL's open APIs.
