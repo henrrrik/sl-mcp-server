@@ -22,11 +22,14 @@ import (
 // pick a stop, then call departures / trips with the resulting site_id.
 func NearestStopsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("nearest_stops",
-		mcp.WithDescription("Find SL transit sites nearest to a lat/lon coordinate, ordered by distance. Use to chain from a geocoder: \"what stops are near 59.407, 17.872\" → call departures/trips with the returned site_id. radius_m bounds the search (default 500 m), limit caps the result (default 5)."),
+		mcp.WithDescription("Find SL transit sites nearest to a lat/lon coordinate, ordered by distance. Use to chain from a geocoder: \"what stops are near 59.407, 17.872\" → call departures/trips with the returned short_id. Each result carries the short_id (for departures/deviations), gid_16 (for trips.origin_id), locality (note field from the sites catalog), coord as [lat, lon], and haversine distance_m. radius_m bounds the search (default 500 m), limit caps the result (default 5)."),
 		mcp.WithNumber("lat", mcp.Required(), mcp.Description("Latitude (WGS84, e.g. 59.3311 for T-Centralen).")),
 		mcp.WithNumber("lon", mcp.Required(), mcp.Description("Longitude (WGS84, e.g. 18.0593 for T-Centralen).")),
 		mcp.WithNumber("radius_m", mcp.Description("Maximum distance from (lat, lon) in meters. Default 500.")),
 		mcp.WithNumber("limit", mcp.Description("Maximum number of stops to return. Default 5.")),
+		// TODO: transport_mode filter would need a sites → lines join; the
+		// upstream /v1/sites catalog doesn't surface served modes directly.
+		// Leaving it off v1 since the data for it isn't one API call away.
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -75,13 +78,16 @@ const (
 )
 
 // nearestStop is the outward shape for each result. Distance is rounded to
-// the nearest metre — sub-metre precision is noise at this scale.
+// the nearest metre — sub-metre precision is noise at this scale. ID forms
+// mirror resolve's naming (short_id / gid_16) so chaining into departures
+// or trips is straight pattern-matching.
 type nearestStop struct {
-	SiteID    int     `json:"site_id"`
-	Name      string  `json:"name"`
-	Lat       float64 `json:"lat"`
-	Lon       float64 `json:"lon"`
-	DistanceM int     `json:"distance_m"`
+	ShortID   int       `json:"short_id"`
+	GID16     string    `json:"gid_16"`
+	Name      string    `json:"name"`
+	Locality  string    `json:"locality,omitempty"`
+	Coord     []float64 `json:"coord"`
+	DistanceM int       `json:"distance_m"`
 }
 
 // nearestStops filters and sorts the /v1/sites catalog by haversine distance
@@ -92,6 +98,7 @@ func nearestStops(raw []byte, lat, lon, radiusM float64, limit int) ([]nearestSt
 	var sites []struct {
 		ID   int     `json:"id"`
 		Name string  `json:"name"`
+		Note string  `json:"note"`
 		Lat  float64 `json:"lat"`
 		Lon  float64 `json:"lon"`
 	}
@@ -109,10 +116,11 @@ func nearestStops(raw []byte, lat, lon, radiusM float64, limit int) ([]nearestSt
 			continue
 		}
 		out = append(out, nearestStop{
-			SiteID:    s.ID,
+			ShortID:   s.ID,
+			GID16:     siteIDToGID(s.ID),
 			Name:      s.Name,
-			Lat:       s.Lat,
-			Lon:       s.Lon,
+			Locality:  s.Note,
+			Coord:     []float64{s.Lat, s.Lon},
 			DistanceM: int(math.Round(d)),
 		})
 	}

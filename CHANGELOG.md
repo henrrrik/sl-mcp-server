@@ -62,6 +62,26 @@
   response by ~40% and keeps compound filters (e.g. line="43" + limit=3)
   working unchanged.
 
+### nearest_stops
+
+- Output shape refactor to match the id naming used by `resolve` and
+  `trips.resolved`. Each result is now `{short_id, gid_16, name,
+  locality, coord: [lat, lon], distance_m}`.
+  - `site_id` → `short_id` (rename, same int).
+  - New `gid_16` field (the 16-digit GID form) so callers can plug the
+    result into `trips.origin_id` / `trips.destination_id` without a
+    manual transform.
+  - `lat` + `lon` → `coord` (array) to match the sites/stop_finder
+    output shape.
+  - New `locality` field, sourced from the sites catalog's `note`.
+- `transport_mode` filter is not yet implemented — the sites catalog
+  doesn't expose served modes directly, and joining against lines would
+  need extra upstream calls. Left as a v1 TODO; filter client-side if
+  needed.
+- **Breaking** for callers consuming the previous shape: rename
+  `site_id` → `short_id`, read `coord[0]`/`coord[1]` instead of
+  `lat`/`lon`.
+
 ### nearest_stops (new tool)
 
 - `nearest_stops(lat, lon, radius_m=500, limit=5)` returns SL sites

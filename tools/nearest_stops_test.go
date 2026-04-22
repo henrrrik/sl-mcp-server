@@ -134,6 +134,92 @@ func TestNearestStopsTool_MissingCoords(t *testing.T) {
 	}
 }
 
+// Round 2, Section 6: each result carries short_id, gid_16, coord as
+// [lat, lon], and locality (from the sites catalog's `note` field).
+func TestNearestStopsTool_OutputShape(t *testing.T) {
+	body := loadTestData(t, "sites.json")
+	mock := newMockDoer(body)
+
+	_, handler := NearestStopsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"lat":      float64(59.3311),
+		"lon":      float64(18.0593),
+		"radius_m": float64(5000),
+	}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out []map[string]any
+	_ = json.Unmarshal([]byte(text), &out)
+	if len(out) == 0 {
+		t.Fatal("expected at least one stop")
+	}
+	first := out[0]
+
+	// Required fields in the round-2 shape.
+	for _, k := range []string{"short_id", "gid_16", "name", "coord", "distance_m"} {
+		if _, ok := first[k]; !ok {
+			t.Errorf("missing field %q in result: %+v", k, first)
+		}
+	}
+
+	// Old field names should be gone — we renamed them explicitly.
+	for _, forbidden := range []string{"site_id", "lat", "lon"} {
+		if _, ok := first[forbidden]; ok {
+			t.Errorf("old field %q should be removed, got %+v", forbidden, first)
+		}
+	}
+
+	// gid_16 should be the 16-digit GID for the T-Centralen short id 9001.
+	if g, _ := first["gid_16"].(string); g != "9091001000009001" {
+		t.Errorf("expected gid_16=9091001000009001, got %q", g)
+	}
+
+	// coord should be [lat, lon] as a float array.
+	coord, _ := first["coord"].([]any)
+	if len(coord) != 2 {
+		t.Errorf("expected coord as [lat, lon] array, got %+v", coord)
+	}
+}
+
+// Round 2, Section 6: locality comes from the sites catalog's `note`
+// field. The fixture tags Aska with note=Södertälje.
+func TestNearestStopsTool_LocalityFromNote(t *testing.T) {
+	body := loadTestData(t, "sites.json")
+	mock := newMockDoer(body)
+
+	_, handler := NearestStopsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	// Aska, Södertälje: lat 59.2538, lon 17.4567
+	req.Params.Arguments = map[string]any{
+		"lat":      float64(59.2538),
+		"lon":      float64(17.4567),
+		"radius_m": float64(1000),
+	}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out []struct {
+		Name     string `json:"name"`
+		Locality string `json:"locality"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if len(out) == 0 {
+		t.Fatal("expected Aska within 1 km of its own coords")
+	}
+	if out[0].Name != "Aska" {
+		t.Errorf("expected Aska as top hit, got %q", out[0].Name)
+	}
+	if out[0].Locality != "Södertälje" {
+		t.Errorf("expected locality=Södertälje from fixture note, got %q", out[0].Locality)
+	}
+}
+
 // P3: haversine unit test — Stockholm to Oslo is ~416 km along the great
 // circle. Check we're in the ballpark (within 5%).
 func TestHaversineM(t *testing.T) {
