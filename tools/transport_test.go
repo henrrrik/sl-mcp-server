@@ -512,13 +512,33 @@ func TestLinesTool(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if mock.lastReq.URL.String() != "https://transport.integration.sl.se/v1/lines" {
+	// /v1/lines requires transport_authority_id or SL returns HTTP 400.
+	// Default to 1 (Storstockholms Lokaltrafik) since this is an SL server.
+	if mock.lastReq.URL.String() != "https://transport.integration.sl.se/v1/lines?transport_authority_id=1" {
 		t.Errorf("unexpected URL: %s", mock.lastReq.URL.String())
 	}
 
 	text := result.Content[0].(mcp.TextContent).Text
 	if !strings.Contains(text, "blåbuss") {
 		t.Error("result should contain fixture data")
+	}
+}
+
+func TestLinesTool_TransportAuthorityIDOverride(t *testing.T) {
+	body := loadTestData(t, "lines.json")
+	mock := newMockDoer(body)
+
+	_, handler := LinesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"transport_authority_id": float64(2)}
+
+	if _, err := handler(context.Background(), req); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if mock.lastReq.URL.String() != "https://transport.integration.sl.se/v1/lines?transport_authority_id=2" {
+		t.Errorf("unexpected URL: %s", mock.lastReq.URL.String())
 	}
 }
 
