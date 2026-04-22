@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### nearest_stops (new tool)
+
+- `nearest_stops(lat, lon, radius_m=500, limit=5)` returns SL sites
+  ordered by haversine distance from the given coordinate. Fetches the
+  `/v1/sites` catalog once and filters in-process — no per-request
+  geocoding call. Chains cleanly with an external geocoder: hand the
+  lat/lon of a user's location (or a street address you've already
+  resolved) to this tool, pick a stop, then call `departures` / `trips`
+  with the resulting `site_id`.
+
 ## 1.2.0
 
 ### trips

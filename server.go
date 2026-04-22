@@ -32,6 +32,7 @@ func NewSLServer(client slclient.HTTPDoer) *server.MCPServer {
 	add(tools.LinesTool(client))
 	add(tools.StopPointsTool(client))
 	add(tools.TransportAuthoritiesTool(client))
+	add(tools.NearestStopsTool(client))
 
 	return s
 }
