@@ -498,6 +498,105 @@ func TestDeparturesTool_MissingSiteID(t *testing.T) {
 	}
 }
 
+func TestDeparturesTool_NormalizesInputForms(t *testing.T) {
+	// Every accepted site_id form — short, 8-digit 18xx, 9-digit 3BA1CDEFG,
+	// and 16-digit GID — must resolve to the same short-form upstream URL.
+	// Jakobsberg (9702) picked because stop_finder documents all four forms
+	// for it in the trafiklab support article.
+	cases := []struct {
+		name  string
+		input any
+	}{
+		{"short string", "9702"},
+		{"short number (backwards compat)", float64(9702)},
+		{"8-digit 18xx string", "18009702"},
+		{"9-digit string", "300109702"},
+		{"16-digit GID string", "9091001000009702"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mock := &routedMock{routes: []mockRoute{
+				{pathContains: "/v1/sites/9702/departures", body: `{"departures":[],"stop_deviations":[]}`},
+				{pathContains: "/v1/messages", body: "[]"},
+			}}
+
+			_, handler := DeparturesTool(mock)
+
+			req := mcp.CallToolRequest{}
+			req.Params.Arguments = map[string]any{"site_id": tc.input}
+
+			result, err := handler(context.Background(), req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.IsError {
+				t.Fatalf("normalization should succeed: %s", result.Content[0].(mcp.TextContent).Text)
+			}
+			if got := departuresURLSeen(mock); !strings.Contains(got, "/v1/sites/9702/departures") {
+				t.Errorf("expected short-form URL regardless of input shape, got %s", got)
+			}
+		})
+	}
+}
+
+func TestDeparturesTool_InvalidFormatReturnsStructuredError(t *testing.T) {
+	cases := []any{
+		"foo",
+		"9702.5",
+		"-1",
+		// Oversized number loses precision at the JSON boundary; reject.
+		float64(1e18),
+	}
+	for _, in := range cases {
+		mock := newMockDoer("{}")
+		_, handler := DeparturesTool(mock)
+
+		req := mcp.CallToolRequest{}
+		req.Params.Arguments = map[string]any{"site_id": in}
+
+		result, err := handler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("unexpected error for %v: %v", in, err)
+		}
+		if !result.IsError {
+			t.Fatalf("expected IsError for %v", in)
+		}
+		text := result.Content[0].(mcp.TextContent).Text
+		if !strings.Contains(text, `"error":"invalid_site_id_format"`) {
+			t.Errorf("expected invalid_site_id_format JSON for %v, got %s", in, text)
+		}
+	}
+}
+
+func TestDeparturesTool_OutOfRangeReturnsStructuredError(t *testing.T) {
+	cases := []any{
+		"0",
+		"101",
+		"10000",
+		"99999999",
+	}
+	for _, in := range cases {
+		mock := newMockDoer("{}")
+		_, handler := DeparturesTool(mock)
+
+		req := mcp.CallToolRequest{}
+		req.Params.Arguments = map[string]any{"site_id": in}
+
+		result, err := handler(context.Background(), req)
+		if err != nil {
+			t.Fatalf("unexpected error for %v: %v", in, err)
+		}
+		if !result.IsError {
+			t.Fatalf("expected IsError for %v", in)
+		}
+		text := result.Content[0].(mcp.TextContent).Text
+		if !strings.Contains(text, `"error":"site_id_out_of_range"`) {
+			t.Errorf("expected site_id_out_of_range JSON for %v, got %s", in, text)
+		}
+	}
+}
+
 func TestLinesTool(t *testing.T) {
 	body := loadTestData(t, "lines.json")
 	mock := newMockDoer(body)
