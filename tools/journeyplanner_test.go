@@ -668,6 +668,50 @@ func TestTripsTool_WarningWithJourneysDoesNotIntercept(t *testing.T) {
 	}
 }
 
+// deviationsBodyWithWindow builds a /v1/messages response with the given
+// publish window applied to every deviation entry.
+func deviationsBodyWithWindow(publishFrom, publishUpto string, specs ...[2]string) string {
+	type dline struct {
+		Designation   string `json:"designation"`
+		ID            int    `json:"id"`
+		TransportMode string `json:"transport_mode"`
+	}
+	type scope struct {
+		Lines []dline `json:"lines"`
+	}
+	type variant struct {
+		Header   string `json:"header"`
+		Details  string `json:"details"`
+		Language string `json:"language"`
+	}
+	type dev struct {
+		DeviationCaseID int               `json:"deviation_case_id"`
+		Scope           scope             `json:"scope"`
+		Publish         map[string]string `json:"publish"`
+		MessageVariants []variant         `json:"message_variants"`
+	}
+	var out []dev
+	for i, s := range specs {
+		out = append(out, dev{
+			DeviationCaseID: 1000 + i,
+			Scope: scope{
+				Lines: []dline{{Designation: s[0], TransportMode: s[1]}},
+			},
+			Publish: map[string]string{
+				"from": publishFrom,
+				"upto": publishUpto,
+			},
+			MessageVariants: []variant{{
+				Header:   fmt.Sprintf("Test deviation %d for %s %s", i, s[1], s[0]),
+				Details:  "Details",
+				Language: "sv",
+			}},
+		})
+	}
+	b, _ := json.Marshal(out)
+	return string(b)
+}
+
 // deviationsBody builds a /v1/messages response with one deviation per
 // (line, mode) pair passed in.
 func deviationsBody(specs ...[2]string) string {
@@ -759,6 +803,119 @@ func TestTripsTool_DeviationsAttachedToMatchingLegs(t *testing.T) {
 	// Train 43 leg: should have one matching deviation.
 	if len(legs[2].Deviations) != 1 {
 		t.Errorf("leg[2] (train 43): expected 1 deviation, got %d", len(legs[2].Deviations))
+	}
+}
+
+func TestTripsTool_DeviationsFilterByTimeWindow(t *testing.T) {
+	tripsBody := loadTestData(t, "trips.json")
+	// Fixture bus 179 leg departs 2026-04-21T21:03:00Z. Publish a deviation
+	// for BUS 179 that's only active May 15-29 — must NOT attach.
+	devs := deviationsBodyWithWindow("2026-05-15T00:00:00+02:00", "2026-05-29T23:59:00+02:00",
+		[2]string{"179", "BUS"})
+
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: tripsBody},
+		{pathContains: "/v1/messages", body: devs},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Vällingby", "destination": "Stockholm City"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Journeys []struct {
+			Legs []struct {
+				Line              string            `json:"line"`
+				Deviations        []json.RawMessage `json:"deviations"`
+				HasMoreDeviations bool              `json:"has_more_deviations"`
+			} `json:"legs"`
+		} `json:"journeys"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v\n%s", err, text)
+	}
+	for _, leg := range out.Journeys[0].Legs {
+		if len(leg.Deviations) != 0 {
+			t.Errorf("leg (line=%q) should have 0 deviations — publish window is future; got %d", leg.Line, len(leg.Deviations))
+		}
+	}
+}
+
+func TestTripsTool_DeviationsCappedAtThree(t *testing.T) {
+	tripsBody := loadTestData(t, "trips.json")
+	// 5 deviations all matching bus 179. Should cap at 3 with has_more_deviations=true.
+	devs := deviationsBodyWithWindow("2026-04-01T00:00:00+02:00", "2026-05-01T00:00:00+02:00",
+		[2]string{"179", "BUS"},
+		[2]string{"179", "BUS"},
+		[2]string{"179", "BUS"},
+		[2]string{"179", "BUS"},
+		[2]string{"179", "BUS"},
+	)
+
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: tripsBody},
+		{pathContains: "/v1/messages", body: devs},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Vällingby", "destination": "Stockholm City"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Journeys []struct {
+			Legs []struct {
+				Line              string            `json:"line"`
+				Mode              string            `json:"mode"`
+				Deviations        []json.RawMessage `json:"deviations"`
+				HasMoreDeviations bool              `json:"has_more_deviations"`
+			} `json:"legs"`
+		} `json:"journeys"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v\n%s", err, text)
+	}
+	// Find the bus 179 leg
+	for _, leg := range out.Journeys[0].Legs {
+		if leg.Mode != "bus" || leg.Line != "179" {
+			continue
+		}
+		if len(leg.Deviations) != 3 {
+			t.Errorf("expected 3 deviations after cap, got %d", len(leg.Deviations))
+		}
+		if !leg.HasMoreDeviations {
+			t.Errorf("expected has_more_deviations=true when truncated")
+		}
+	}
+}
+
+func TestTripsTool_DeviationsUnderCapNoFlag(t *testing.T) {
+	tripsBody := loadTestData(t, "trips.json")
+	// 2 deviations — under the cap, no flag expected.
+	devs := deviationsBodyWithWindow("2026-04-01T00:00:00+02:00", "2026-05-01T00:00:00+02:00",
+		[2]string{"179", "BUS"},
+		[2]string{"179", "BUS"},
+	)
+
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: tripsBody},
+		{pathContains: "/v1/messages", body: devs},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Vällingby", "destination": "Stockholm City"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	if strings.Contains(text, "has_more_deviations") {
+		t.Errorf("has_more_deviations should be omitted when under cap")
 	}
 }
 

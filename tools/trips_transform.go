@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/henrrrik/sl-mcp-server/slclient"
 )
@@ -71,16 +72,17 @@ type trimmedJourney struct {
 }
 
 type trimmedLeg struct {
-	Mode       string         `json:"mode"`
-	Line       string         `json:"line,omitempty"`
-	Direction  string         `json:"direction,omitempty"`
-	From       string         `json:"from,omitempty"`
-	To         string         `json:"to,omitempty"`
-	Departure  string         `json:"departure,omitempty"`
-	Arrival    string         `json:"arrival,omitempty"`
-	Duration   int            `json:"duration"`
-	Realtime   bool           `json:"realtime,omitempty"`
-	Deviations []legDeviation `json:"deviations,omitempty"`
+	Mode              string         `json:"mode"`
+	Line              string         `json:"line,omitempty"`
+	Direction         string         `json:"direction,omitempty"`
+	From              string         `json:"from,omitempty"`
+	To                string         `json:"to,omitempty"`
+	Departure         string         `json:"departure,omitempty"`
+	Arrival           string         `json:"arrival,omitempty"`
+	Duration          int            `json:"duration"`
+	Realtime          bool           `json:"realtime,omitempty"`
+	Deviations        []legDeviation `json:"deviations,omitempty"`
+	HasMoreDeviations bool           `json:"has_more_deviations,omitempty"`
 }
 
 // legDeviation is the per-leg summary of an active /v1/messages entry matching
@@ -355,8 +357,16 @@ type deviationKey struct {
 	mode string // upstream TRAIN/BUS/METRO/TRAM/SHIP
 }
 
+// maxDeviationsPerLeg caps the attached array to avoid flooding a trip response
+// with dozens of marginally-relevant notices when a line has lots of concurrent
+// deviations. The upstream /v1/messages endpoint doesn't expose a priority we
+// can sort by reliably, so we keep the first N after time filtering.
+const maxDeviationsPerLeg = 3
+
 // attachDeviations walks each leg and attaches any deviations from the index
-// whose (line, mode) matches. Walking legs and untyped legs are skipped.
+// whose (line, mode) matches AND whose publish window covers the leg's
+// departure time. Walking legs and untyped legs are skipped. When more than
+// maxDeviationsPerLeg match, the array is truncated and HasMoreDeviations set.
 func attachDeviations(tt *trimmedTrips, index map[deviationKey][]legDeviation) {
 	for ji := range tt.Journeys {
 		for li := range tt.Journeys[ji].Legs {
@@ -368,11 +378,49 @@ func attachDeviations(tt *trimmedTrips, index map[deviationKey][]legDeviation) {
 			if mode == "" {
 				continue
 			}
-			if matches, ok := index[deviationKey{line: leg.Line, mode: mode}]; ok {
-				leg.Deviations = matches
+			candidates, ok := index[deviationKey{line: leg.Line, mode: mode}]
+			if !ok {
+				continue
+			}
+			legTime, legTimeErr := parseDeviationTime(leg.Departure)
+			filtered := make([]legDeviation, 0, len(candidates))
+			for _, cand := range candidates {
+				if legTimeErr == nil && !deviationActiveAt(cand, legTime) {
+					continue
+				}
+				filtered = append(filtered, cand)
+			}
+			if len(filtered) > maxDeviationsPerLeg {
+				leg.HasMoreDeviations = true
+				filtered = filtered[:maxDeviationsPerLeg]
+			}
+			if len(filtered) > 0 {
+				leg.Deviations = filtered
 			}
 		}
 	}
+}
+
+// parseDeviationTime parses a trips/deviation timestamp. RFC3339Nano handles
+// both "2026-04-19T09:00:00+02:00" and "2026-04-19T09:00:00.000+02:00".
+func parseDeviationTime(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, fmt.Errorf("empty timestamp")
+	}
+	return time.Parse(time.RFC3339Nano, s)
+}
+
+// deviationActiveAt reports whether the deviation's publish window covers the
+// given moment. If either bound is missing or unparseable we conservatively
+// keep the deviation — over-including is less bad than silently dropping a
+// real warning.
+func deviationActiveAt(d legDeviation, at time.Time) bool {
+	from, fromErr := parseDeviationTime(d.From)
+	upto, uptoErr := parseDeviationTime(d.Upto)
+	if fromErr != nil || uptoErr != nil {
+		return true
+	}
+	return !at.Before(from) && !at.After(upto)
 }
 
 // resolveCandidates fetches /v2/stop-finder for the given query and returns
