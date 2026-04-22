@@ -35,6 +35,22 @@
   the tool description so callers know to pass `verbose=true` if they
   actually need gid / transport_authority / contractor / valid.
 
+### resolve
+
+- New `stop_only` parameter (default `true`). When `true`, POIs /
+  addresses / localities are dropped from both `best` and `candidates`
+  — trip planning should never suggest "Järfälla Hyrkart" for a
+  "Järfälla kyrka" query. Pass `stop_only=false` to keep non-stop
+  candidates (best still stays nil if no stop matches).
+- `best.unambiguous: true` is now set when `match_quality >= 1000` and
+  no other stop candidate is within 50 points. Callers can skip the
+  disambiguation round-trip on clear winners.
+- `candidates` now caps at 4 runners-up so the response stays compact
+  on heavily-shared names.
+- Internals: stop-type classification is now a single `isStopType`
+  helper shared with the `trips` ambiguity-resolver, so both tools
+  agree on what counts as a stop.
+
 ### nearest_stops (new tool)
 
 - `nearest_stops(lat, lon, radius_m=500, limit=5)` returns SL sites

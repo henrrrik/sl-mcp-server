@@ -17,6 +17,7 @@ type resolvedSite struct {
 	Type         string    `json:"type,omitempty"`
 	Coord        []float64 `json:"coord,omitempty"`
 	MatchQuality int       `json:"match_quality,omitempty"`
+	Unambiguous  bool      `json:"unambiguous,omitempty"`
 }
 
 // resolveResponse is the outer shape emitted by the resolve tool.
@@ -26,12 +27,38 @@ type resolveResponse struct {
 	Query      string         `json:"query,omitempty"`
 }
 
+// resolveCandidateCap caps the candidates array so chatty upstreams can't
+// flood the response. Round 2 spec: best + up to 4 runners-up.
+const resolveCandidateCap = 4
+
+// unambiguous thresholds: a clear winner scores >= 1000 AND beats the next
+// stop candidate by at least 50 points. Genuine ambiguity (two pendeltåg
+// stations both at 1000 quality) fails the delta check and stays flagged
+// ambiguous so the caller still knows to disambiguate.
+const (
+	resolveUnambiguousQualityMin = 1000
+	resolveUnambiguousDeltaMin   = 50
+)
+
+// isStopType reports whether an upstream stop-finder type qualifies as a
+// transit stop for the purposes of resolve / trips endpoint selection.
+// Shared so resolve and trips agree on what counts as a stop (POIs,
+// addresses, localities, streets all fail the check).
+func isStopType(typ string) bool {
+	return typ == "stop"
+}
+
 // buildResolveResponse reshapes a raw /v2/stop-finder body into the resolve
 // tool's shape: the single highest-quality stop as `best`, with the rest
-// (stops and non-stops alike) preserved as `candidates`. All three id
-// forms are computed for any entry whose GID we can parse into a short
-// site id.
-func buildResolveResponse(raw []byte) ([]byte, error) {
+// preserved as `candidates`. All three id forms are computed for any
+// entry whose GID we can parse into a short site id.
+//
+// When stopOnly is true (the default for resolve), non-stop entries are
+// dropped from both best and candidates. When false, non-stop entries can
+// appear in candidates but never as best — callers who asked for
+// "Järfälla Hyrkart" with stop_only=false still shouldn't plan trips from
+// a go-kart track.
+func buildResolveResponse(raw []byte, stopOnly bool) ([]byte, error) {
 	var env struct {
 		Locations []struct {
 			ID               string    `json:"id"`
@@ -54,6 +81,9 @@ func buildResolveResponse(raw []byte) ([]byte, error) {
 
 	out := resolveResponse{}
 	for _, loc := range env.Locations {
+		if stopOnly && !isStopType(loc.Type) {
+			continue
+		}
 		name := loc.DisassembledName
 		if name == "" {
 			name = loc.Name
@@ -70,15 +100,47 @@ func buildResolveResponse(raw []byte) ([]byte, error) {
 			rs.GID16 = siteIDToGID(short)
 			rs.GID180 = siteIDTo180(short)
 		}
-		if out.Best == nil && rs.Type == "stop" {
+		if out.Best == nil && isStopType(loc.Type) {
 			best := rs
 			out.Best = &best
+			continue
+		}
+		if len(out.Candidates) >= resolveCandidateCap {
 			continue
 		}
 		out.Candidates = append(out.Candidates, rs)
 	}
 
+	if out.Best != nil {
+		out.Best.Unambiguous = isUnambiguousResolve(*out.Best, out.Candidates)
+	}
+
 	return json.Marshal(out)
+}
+
+// isUnambiguousResolve returns true when the best match scores at least
+// resolveUnambiguousQualityMin AND outranks the next-best STOP candidate
+// by at least resolveUnambiguousDeltaMin. Non-stop candidates don't count
+// toward ambiguity — a POI that happens to share a name doesn't reduce
+// confidence in the stop match.
+func isUnambiguousResolve(best resolvedSite, candidates []resolvedSite) bool {
+	if best.MatchQuality < resolveUnambiguousQualityMin {
+		return false
+	}
+	nextStopQ := -1
+	for _, c := range candidates {
+		if !isStopType(c.Type) {
+			continue
+		}
+		if c.MatchQuality > nextStopQ {
+			nextStopQ = c.MatchQuality
+		}
+	}
+	if nextStopQ < 0 {
+		// No other stop candidates — unambiguous by elimination.
+		return true
+	}
+	return best.MatchQuality-nextStopQ >= resolveUnambiguousDeltaMin
 }
 
 // siteIDFromStopFinderEntry returns the short-form site id for a

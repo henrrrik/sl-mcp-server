@@ -35,14 +35,21 @@ func SystemInfoTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 
 func ResolveTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("resolve",
-		mcp.WithDescription("Resolve a free-text location query to a canonical SL site. Returns the single best match with all three id forms (short site_id, 8-digit 18xx stopId, and 16-digit GID) plus a `candidates` array of runners-up. Prefer this over chaining stop_finder → manual id transform → departures/trips — it's the canonical \"turn a name into an id\" primitive. Only stop-typed results are considered for the best match; POIs and addresses are preserved in `candidates` for recovery but never returned as `best`."),
+		mcp.WithDescription("Resolve a free-text location query to a canonical SL site. Returns the single best match with all three id forms (short site_id, 8-digit 18xx gid_180, and 16-digit gid_16) plus up to 4 `candidates` runners-up. Prefer this over chaining stop_finder → manual id transform → departures/trips — it's the canonical \"turn a name into an id\" primitive. Only stop-typed results are considered for the best match (POIs and addresses never win); set stop_only=false if you also want POIs/addresses to appear in `candidates`. When best.unambiguous=true you can skip the disambiguation round-trip — match_quality is ≥1000 and no other stop is within 50 points."),
 		mcp.WithString("query", mcp.Required(), mcp.Description("Free-form name to search for. Fuzzy matching is applied.")),
+		mcp.WithBoolean("stop_only", mcp.Description("Filter out POIs, addresses, and localities entirely. Default true — for trip planning you almost always want only transit stops. Set false to see POI matches in `candidates` (e.g. when disambiguating a user's free-form location).")),
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		query := request.GetString("query", "")
 		if query == "" {
 			return mcp.NewToolResultError("query is required"), nil
+		}
+		stopOnly := true
+		if raw, present := request.GetArguments()["stop_only"]; present {
+			if b, ok := raw.(bool); ok {
+				stopOnly = b
+			}
 		}
 
 		params := url.Values{
@@ -56,7 +63,7 @@ func ResolveTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 			return errResult, nil
 		}
 
-		out, err := buildResolveResponse(body)
+		out, err := buildResolveResponse(body, stopOnly)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to reshape resolve response: %v", err)), nil
 		}
@@ -373,7 +380,7 @@ func splitStopCandidates(cands []locationCandidate) (stops, all []locationCandid
 	all = cands
 	stops = make([]locationCandidate, 0, len(cands))
 	for _, c := range cands {
-		if c.Type == "stop" {
+		if isStopType(c.Type) {
 			stops = append(stops, c)
 		}
 	}
