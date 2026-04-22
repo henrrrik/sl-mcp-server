@@ -290,12 +290,37 @@ func TestResolveTool_ReturnsBestWithAllIDForms(t *testing.T) {
 		t.Errorf("expected match_quality=1000, got %d", out.Best.MatchQuality)
 	}
 
-	// Fixture: Slussplan (stop, 850) + Slussen T-bana (POI, 700) — both
-	// should land in candidates.
-	if len(out.Candidates) != 2 {
-		t.Fatalf("expected 2 candidates, got %d", len(out.Candidates))
+	// Default is stop_only=true — Slussplan (stop, 850) passes, the POI
+	// "Slussen T-bana" is dropped.
+	if len(out.Candidates) != 1 {
+		t.Fatalf("expected 1 stop candidate with default stop_only=true, got %d", len(out.Candidates))
 	}
-	var gotPOI, gotStop bool
+	if out.Candidates[0].Type != "stop" {
+		t.Errorf("default stop_only should drop POI candidates, got %+v", out.Candidates)
+	}
+}
+
+// Round 2, Section 4: stop_only=false lets POI / address / locality entries
+// appear in candidates for callers disambiguating free-form user input.
+func TestResolveTool_StopOnlyFalseKeepsPOIs(t *testing.T) {
+	body := loadTestData(t, "stop_finder.json")
+	mock := newMockDoer(body)
+
+	_, handler := ResolveTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": "Slussen", "stop_only": false}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Candidates []struct {
+			Type string `json:"type"`
+		} `json:"candidates"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	var gotStop, gotPOI bool
 	for _, c := range out.Candidates {
 		switch c.Type {
 		case "stop":
@@ -305,7 +330,97 @@ func TestResolveTool_ReturnsBestWithAllIDForms(t *testing.T) {
 		}
 	}
 	if !gotStop || !gotPOI {
-		t.Errorf("expected stop+poi in candidates, got %+v", out.Candidates)
+		t.Errorf("expected both stop and poi candidates with stop_only=false, got %+v", out.Candidates)
+	}
+}
+
+// Round 2, Section 4: unambiguous=true when best scores ≥1000 and the
+// next stop candidate is ≥50 points lower. Slussen fixture: Slussen=1000,
+// Slussplan=850. Delta=150, well above threshold.
+func TestResolveTool_UnambiguousClearWinner(t *testing.T) {
+	body := loadTestData(t, "stop_finder.json")
+	mock := newMockDoer(body)
+
+	_, handler := ResolveTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": "Slussen"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Best *struct {
+			Unambiguous bool `json:"unambiguous"`
+		} `json:"best"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if out.Best == nil {
+		t.Fatal("expected best populated")
+	}
+	if !out.Best.Unambiguous {
+		t.Errorf("expected unambiguous=true (1000 vs 850, delta=150)")
+	}
+}
+
+// Round 2, Section 4: unambiguous=false when two stops are within 50
+// points of each other — the caller still needs to pick.
+func TestResolveTool_UnambiguousFalseForNearTie(t *testing.T) {
+	body := `{"locations":[
+		{"coord":[59.4,17.8],"disassembledName":"Jakobsberg","id":"9091001000009702","matchQuality":1000,"name":"Jakobsberg","parent":{"name":"Järfälla"},"properties":{"stopId":"18009702"},"type":"stop"},
+		{"coord":[59.4,17.8],"disassembledName":"Jakobsbergs centrum","id":"9091001000009703","matchQuality":970,"name":"Jakobsbergs centrum","parent":{"name":"Järfälla"},"properties":{"stopId":"18009703"},"type":"stop"}
+	]}`
+	mock := newMockDoer(body)
+
+	_, handler := ResolveTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": "Jakobsberg"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Best *struct {
+			Unambiguous bool `json:"unambiguous"`
+		} `json:"best"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if out.Best == nil {
+		t.Fatal("expected best populated")
+	}
+	if out.Best.Unambiguous {
+		t.Errorf("expected unambiguous=false (1000 vs 970, delta=30 < 50)")
+	}
+}
+
+// Round 2, Section 4: candidates is capped at 4 runners-up to bound the
+// response size on heavily-shared names.
+func TestResolveTool_CandidatesCappedAtFour(t *testing.T) {
+	// 7 stops — best + 6 more. We should see best + 4 candidates, no more.
+	body := `{"locations":[
+		{"coord":[59.0,18.0],"disassembledName":"A","id":"9091001000001001","matchQuality":1000,"name":"A","parent":{"name":"X"},"type":"stop"},
+		{"coord":[59.0,18.0],"disassembledName":"B","id":"9091001000001002","matchQuality":900,"name":"B","parent":{"name":"X"},"type":"stop"},
+		{"coord":[59.0,18.0],"disassembledName":"C","id":"9091001000001003","matchQuality":800,"name":"C","parent":{"name":"X"},"type":"stop"},
+		{"coord":[59.0,18.0],"disassembledName":"D","id":"9091001000001004","matchQuality":700,"name":"D","parent":{"name":"X"},"type":"stop"},
+		{"coord":[59.0,18.0],"disassembledName":"E","id":"9091001000001005","matchQuality":600,"name":"E","parent":{"name":"X"},"type":"stop"},
+		{"coord":[59.0,18.0],"disassembledName":"F","id":"9091001000001006","matchQuality":500,"name":"F","parent":{"name":"X"},"type":"stop"},
+		{"coord":[59.0,18.0],"disassembledName":"G","id":"9091001000001007","matchQuality":400,"name":"G","parent":{"name":"X"},"type":"stop"}
+	]}`
+	mock := newMockDoer(body)
+
+	_, handler := ResolveTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": "X"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Best       any              `json:"best"`
+		Candidates []map[string]any `json:"candidates"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if len(out.Candidates) != 4 {
+		t.Errorf("expected candidates capped at 4, got %d", len(out.Candidates))
 	}
 }
 
@@ -325,9 +440,10 @@ func TestResolveTool_MissingQuery(t *testing.T) {
 	}
 }
 
-// P1: when stop_finder returns only POIs, best is nil and POIs surface
-// as candidates so callers can recover.
-func TestResolveTool_OnlyPOIsLeavesBestEmpty(t *testing.T) {
+// Round 2, Section 4 acceptance: with default stop_only=true, an input
+// that only matches POIs returns empty best AND empty candidates — no
+// stop available and we refuse to suggest POIs for trip planning.
+func TestResolveTool_OnlyPOIsDefaultsEmpty(t *testing.T) {
 	body := `{"locations":[
 		{"coord":[59.4,17.8],"disassembledName":"Järfälla Hyrkart","id":"poi:1","matchQuality":900,"name":"Järfälla Hyrkart","parent":{"name":"Järfälla"},"type":"poi"}
 	]}`
@@ -341,10 +457,8 @@ func TestResolveTool_OnlyPOIsLeavesBestEmpty(t *testing.T) {
 	text := result.Content[0].(mcp.TextContent).Text
 
 	var out struct {
-		Best       any `json:"best"`
-		Candidates []struct {
-			Type string `json:"type"`
-		} `json:"candidates"`
+		Best       any   `json:"best"`
+		Candidates []any `json:"candidates"`
 	}
 	if err := json.Unmarshal([]byte(text), &out); err != nil {
 		t.Fatalf("parse: %v", err)
@@ -352,8 +466,38 @@ func TestResolveTool_OnlyPOIsLeavesBestEmpty(t *testing.T) {
 	if out.Best != nil {
 		t.Errorf("best should be absent when no stops match, got %+v", out.Best)
 	}
+	if len(out.Candidates) != 0 {
+		t.Errorf("default stop_only=true should drop POIs from candidates, got %+v", out.Candidates)
+	}
+}
+
+// Round 2, Section 4 acceptance: same POI-only body with stop_only=false
+// preserves the POI as a candidate (and best is still nil — POIs never win).
+func TestResolveTool_OnlyPOIsWithStopOnlyFalse(t *testing.T) {
+	body := `{"locations":[
+		{"coord":[59.4,17.8],"disassembledName":"Järfälla Hyrkart","id":"poi:1","matchQuality":900,"name":"Järfälla Hyrkart","parent":{"name":"Järfälla"},"type":"poi"}
+	]}`
+	mock := newMockDoer(body)
+	_, handler := ResolveTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": "Järfälla Hyrkart", "stop_only": false}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Best       any `json:"best"`
+		Candidates []struct {
+			Type string `json:"type"`
+		} `json:"candidates"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if out.Best != nil {
+		t.Errorf("best should still be nil — POIs never win, got %+v", out.Best)
+	}
 	if len(out.Candidates) != 1 || out.Candidates[0].Type != "poi" {
-		t.Errorf("expected POI candidate preserved, got %+v", out.Candidates)
+		t.Errorf("expected POI candidate with stop_only=false, got %+v", out.Candidates)
 	}
 }
 
