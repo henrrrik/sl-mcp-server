@@ -498,6 +498,180 @@ func TestDeparturesTool_MissingSiteID(t *testing.T) {
 	}
 }
 
+// P2: line filter narrows a multi-line fixture to exactly the matching
+// designation (case-insensitive).
+func TestDeparturesTool_LineFilter(t *testing.T) {
+	body := loadTestData(t, "departures.json")
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/departures", body: body},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
+
+	_, handler := DeparturesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": float64(9192), "line": "43"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Departures []struct {
+			Line struct {
+				Designation string `json:"designation"`
+			} `json:"line"`
+		} `json:"departures"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v\n%s", err, text)
+	}
+	// Fixture has line 43 + line 40. line=43 should keep only the first.
+	if len(out.Departures) != 1 {
+		t.Errorf("expected 1 departure after line=43, got %d", len(out.Departures))
+	}
+	if len(out.Departures) > 0 && out.Departures[0].Line.Designation != "43" {
+		t.Errorf("expected designation=43, got %q", out.Departures[0].Line.Designation)
+	}
+}
+
+// P2: transport_mode filter, matches case-insensitively on line.transport_mode.
+func TestDeparturesTool_TransportModeFilter(t *testing.T) {
+	body := loadTestData(t, "departures.json")
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/departures", body: body},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
+
+	_, handler := DeparturesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": float64(9192), "transport_mode": "train"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Departures []any `json:"departures"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	// Both fixture rows are TRAIN mode; both should survive the filter.
+	if len(out.Departures) != 2 {
+		t.Errorf("expected 2 TRAIN departures, got %d", len(out.Departures))
+	}
+}
+
+// P2: direction_code filter keeps only rows whose direction_code matches.
+func TestDeparturesTool_DirectionCodeFilter(t *testing.T) {
+	// Craft a body with rows in both directions (1 and 2).
+	body := `{
+		"departures": [
+			{"destination": "A", "direction_code": 1, "stop_area": {"id": 5310}, "line": {"id": 43, "designation": "43", "transport_mode": "TRAIN"}},
+			{"destination": "B", "direction_code": 2, "stop_area": {"id": 5310}, "line": {"id": 43, "designation": "43", "transport_mode": "TRAIN"}}
+		],
+		"stop_deviations": []
+	}`
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/departures", body: body},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
+
+	_, handler := DeparturesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": float64(9192), "direction_code": float64(2)}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Departures []struct {
+			Destination   string  `json:"destination"`
+			DirectionCode float64 `json:"direction_code"`
+		} `json:"departures"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if len(out.Departures) != 1 {
+		t.Fatalf("expected 1 departure after direction_code=2, got %d", len(out.Departures))
+	}
+	if out.Departures[0].Destination != "B" {
+		t.Errorf("expected destination=B, got %q", out.Departures[0].Destination)
+	}
+}
+
+// P2: limit truncates the filtered result.
+func TestDeparturesTool_Limit(t *testing.T) {
+	// Build 5 identical departures so we can observe truncation clearly.
+	deps := []any{}
+	for i := 0; i < 5; i++ {
+		deps = append(deps, map[string]any{
+			"destination":    "X",
+			"direction_code": float64(1),
+			"stop_area":      map[string]any{"id": 5310},
+			"line":           map[string]any{"id": 43, "designation": "43", "transport_mode": "TRAIN"},
+		})
+	}
+	b, _ := json.Marshal(map[string]any{"departures": deps, "stop_deviations": []any{}})
+
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/departures", body: string(b)},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
+
+	_, handler := DeparturesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": float64(9192), "limit": float64(3)}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Departures []any `json:"departures"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if len(out.Departures) != 3 {
+		t.Errorf("expected 3 departures after limit=3, got %d", len(out.Departures))
+	}
+}
+
+// P2: filters compose. line + transport_mode + limit should narrow to
+// exactly the first matching row.
+func TestDeparturesTool_FiltersCompose(t *testing.T) {
+	body := loadTestData(t, "departures.json")
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/departures", body: body},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
+
+	_, handler := DeparturesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"site_id":        float64(9192),
+		"transport_mode": "TRAIN",
+		"line":           "40",
+		"limit":          float64(10),
+	}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Departures []struct {
+			Line struct {
+				Designation string `json:"designation"`
+			} `json:"line"`
+		} `json:"departures"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if len(out.Departures) != 1 {
+		t.Fatalf("expected 1 departure after compound filter, got %d", len(out.Departures))
+	}
+	if out.Departures[0].Line.Designation != "40" {
+		t.Errorf("expected designation=40, got %q", out.Departures[0].Line.Designation)
+	}
+}
+
 func TestDeparturesTool_NormalizesInputForms(t *testing.T) {
 	// Every accepted site_id form — short, 8-digit 18xx, 9-digit 3BA1CDEFG,
 	// and 16-digit GID — must resolve to the same short-form upstream URL.

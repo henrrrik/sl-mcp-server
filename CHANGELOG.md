@@ -12,6 +12,16 @@
   resolved) to this tool, pick a stop, then call `departures` / `trips`
   with the resulting `site_id`.
 
+### departures
+
+- New optional filters applied after the upstream fetch:
+  - `transport_mode` — BUS / METRO / TRAIN / TRAM / SHIP / FERRY / TAXI.
+  - `line` — exact match on line designation, case-insensitive.
+  - `direction_code` — SL's upstream direction code (1 or 2).
+  - `limit` — truncate the filtered result.
+- stop_deviations are re-derived from the filtered departures, so a
+  `line=40` query doesn't carry a deviation that only affects line 43.
+
 ## 1.2.0
 
 ### trips
