@@ -961,6 +961,80 @@ func TestTripsTool_WarningWithJourneysDoesNotIntercept(t *testing.T) {
 	}
 }
 
+func TestTripsTool_FiltersStaleBrokerNoiseFromSuccessResponse(t *testing.T) {
+	// When ambiguity auto-resolves, the retry /v2/trips can still come back
+	// with BROKER -8010/-8011 "origin:" / "destination:" entries left over
+	// from the first-attempt name lookup. They're stale — we already got
+	// journeys — and confuse callers. Filter them out, keep everything else.
+	body := loadTestData(t, "trips.json")
+	body = strings.Replace(body,
+		"\"systemMessages\": [\n    \n  ]",
+		`"systemMessages": [
+    {"type":"error","module":"BROKER","code":-8010,"text":"origin: "},
+    {"type":"error","module":"BROKER","code":-8011,"text":"destination: multiple matches"},
+    {"type":"info","module":"SERVER","code":9001,"text":"keep-me"}
+  ]`, 1)
+	if !strings.Contains(body, "keep-me") {
+		t.Fatal("test precondition: fixture systemMessages injection did not apply — update the Replace needle")
+	}
+
+	mock := &routedMock{routes: []mockRoute{{pathContains: "/v2/trips", body: body}}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Vällingby", "destination": "T-Centralen", "skip_deviations": true}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	if strings.Contains(text, "origin: ") || strings.Contains(text, "destination: multiple matches") {
+		t.Errorf("stale BROKER resolution messages should be filtered, got: %.400s", text)
+	}
+	if !strings.Contains(text, "keep-me") {
+		t.Error("non-matching system messages must pass through, but keep-me was dropped")
+	}
+}
+
+func TestTripsTool_LegTimesLocalizeToStockholm(t *testing.T) {
+	// Upstream emits times in UTC (Z suffix). Everything else in SL-land is
+	// local time — rewrite to Europe/Stockholm with an explicit offset so
+	// callers see the same clock the passenger sees on the platform.
+	body := loadTestData(t, "trips.json")
+	mock := newMockDoer(body)
+	_, handler := TripsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"origin": "Vällingby", "destination": "T-Centralen", "skip_deviations": true,
+	}
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	// UTC 21:03 → Stockholm +02:00 = 23:03. The exact offset varies by DST,
+	// but the suffix must carry one and the Z form must be gone.
+	if strings.Contains(text, "Z\"") {
+		t.Errorf("leg times should be localized, found UTC Z-suffix in: %.600s", text)
+	}
+
+	var out tripsResult
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(out.Journeys) == 0 || len(out.Journeys[0].Legs) == 0 {
+		t.Fatal("expected at least one journey with one leg")
+	}
+	dep := out.Journeys[0].Legs[0].Departure
+	if !strings.Contains(dep, "+01:00") && !strings.Contains(dep, "+02:00") {
+		t.Errorf("expected Stockholm offset (+01:00 or +02:00) in leg departure, got %q", dep)
+	}
+}
+
 // deviationsBodyWithWindow builds a /v1/messages response with the given
 // publish window applied to every deviation entry.
 func deviationsBodyWithWindow(publishFrom, publishUpto string, specs ...[2]string) string {
