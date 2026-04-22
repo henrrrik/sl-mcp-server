@@ -21,6 +21,20 @@
   default. This matches the tool description; pass `include_facility=true`
   for the pre-change default.
 
+### lines
+
+- Default shape is now slim: `{id, designation, transport_mode,
+  group_of_lines, name}`. `gid`, `transport_authority`, `contractor`,
+  and `valid` are dropped from the default response — none of them are
+  useful to an LLM trying to answer "what's this line's designation and
+  mode?" and together they triple the token footprint of a typical
+  `lines(transport_mode="METRO")` call.
+- Set `verbose=true` to preserve the full upstream shape.
+- Behavior change: the no-arg `lines()` call already capped at 50 (from
+  the previous release); it now also returns the slim shape. Document in
+  the tool description so callers know to pass `verbose=true` if they
+  actually need gid / transport_authority / contractor / valid.
+
 ### nearest_stops (new tool)
 
 - `nearest_stops(lat, lon, radius_m=500, limit=5)` returns SL sites

@@ -15,6 +15,28 @@ type linesFilters struct {
 	designation  string // prefix match on designation
 	groupOfLines string // substring match on group_of_lines
 	limit        int    // 0 = unlimited
+	verbose      bool   // false = slim shape (default); true = raw upstream
+}
+
+// slimLine is the default LLM-friendly line shape. Drops gid,
+// transport_authority, contractor, and valid — none of which a caller
+// needs to answer "what's this line's designation and what mode does it
+// run?". Keep `id` because it's the stable primary key callers chain with.
+type slimLine struct {
+	ID            int    `json:"id"`
+	Designation   string `json:"designation"`
+	TransportMode string `json:"transport_mode,omitempty"`
+	GroupOfLines  string `json:"group_of_lines,omitempty"`
+	Name          string `json:"name,omitempty"`
+}
+
+// slimLineFromRaw decodes just the fields we keep for the default shape.
+// Malformed entries surface as zero-valued slimLine — the caller decides
+// whether to include.
+func slimLineFromRaw(e json.RawMessage) slimLine {
+	var out slimLine
+	_ = json.Unmarshal(e, &out)
+	return out
 }
 
 // flattenAndFilterLines walks the /v1/lines grouped-by-mode response shape
@@ -33,8 +55,10 @@ type linesFilters struct {
 //   - limit: truncates the result; 0 means unlimited.
 //
 // Group keys are walked in alphabetical order so the output is
-// deterministic across Go map-iteration randomisation. Unknown fields on
-// each line pass through verbatim.
+// deterministic across Go map-iteration randomisation. When verbose=true
+// each line is emitted with every upstream field intact; when false
+// (default) the line is reduced to slimLine's {id, designation,
+// transport_mode, group_of_lines, name}.
 func flattenAndFilterLines(raw []byte, f linesFilters) ([]byte, error) {
 	var groups map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &groups); err != nil {
@@ -43,6 +67,13 @@ func flattenAndFilterLines(raw []byte, f linesFilters) ([]byte, error) {
 
 	keys := selectGroupKeys(groups, f.mode)
 
+	if f.verbose {
+		return flattenLinesVerbose(groups, keys, f)
+	}
+	return flattenLinesSlim(groups, keys, f)
+}
+
+func flattenLinesVerbose(groups map[string]json.RawMessage, keys []string, f linesFilters) ([]byte, error) {
 	kept := make([]json.RawMessage, 0)
 	for _, k := range keys {
 		var entries []json.RawMessage
@@ -54,6 +85,26 @@ func flattenAndFilterLines(raw []byte, f linesFilters) ([]byte, error) {
 				continue
 			}
 			kept = append(kept, e)
+			if f.limit > 0 && len(kept) >= f.limit {
+				return json.Marshal(kept)
+			}
+		}
+	}
+	return json.Marshal(kept)
+}
+
+func flattenLinesSlim(groups map[string]json.RawMessage, keys []string, f linesFilters) ([]byte, error) {
+	kept := make([]slimLine, 0)
+	for _, k := range keys {
+		var entries []json.RawMessage
+		if err := json.Unmarshal(groups[k], &entries); err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !lineMatchesFilters(e, f) {
+				continue
+			}
+			kept = append(kept, slimLineFromRaw(e))
 			if f.limit > 0 && len(kept) >= f.limit {
 				return json.Marshal(kept)
 			}

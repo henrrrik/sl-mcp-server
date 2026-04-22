@@ -1006,6 +1006,93 @@ func TestLinesTool_NoParamsReturnsFlatArrayOfAll(t *testing.T) {
 	}
 }
 
+// Round 2, Section 2: default shape is slim. Drops gid, transport_authority,
+// contractor, valid; keeps {id, designation, transport_mode, group_of_lines, name}.
+func TestLinesTool_DefaultShapeIsSlim(t *testing.T) {
+	body := loadTestData(t, "lines.json")
+	mock := newMockDoer(body)
+
+	_, handler := LinesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"transport_mode": "metro"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var lines []map[string]any
+	_ = json.Unmarshal([]byte(text), &lines)
+	if len(lines) == 0 {
+		t.Fatal("expected metro lines")
+	}
+	allowed := map[string]bool{
+		"id": true, "designation": true, "transport_mode": true,
+		"group_of_lines": true, "name": true,
+	}
+	for i, l := range lines {
+		for k := range l {
+			if !allowed[k] {
+				t.Errorf("line[%d]: unexpected field %q in slim shape", i, k)
+			}
+		}
+	}
+
+	// Fields the slim shape must drop.
+	for _, forbidden := range []string{`"gid"`, `"transport_authority"`, `"contractor"`, `"valid"`} {
+		if strings.Contains(text, forbidden) {
+			t.Errorf("slim response should not contain %s, got %s", forbidden, text)
+		}
+	}
+}
+
+// Round 2, Section 2: verbose=true preserves all upstream fields so
+// callers who need gid/transport_authority/valid can still get them.
+func TestLinesTool_VerbosePreservesAllFields(t *testing.T) {
+	body := loadTestData(t, "lines.json")
+	mock := newMockDoer(body)
+
+	_, handler := LinesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"transport_mode": "metro", "verbose": true}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	for _, expected := range []string{`"gid"`, `"transport_authority"`, `"valid"`} {
+		if !strings.Contains(text, expected) {
+			t.Errorf("verbose response should contain %s, got %s", expected, text)
+		}
+	}
+}
+
+// Round 2, Section 2 acceptance: group_of_lines substring filter still
+// works in slim mode. Fixture has two entries tagged "blåbuss".
+func TestLinesTool_GroupOfLinesSlimFilter(t *testing.T) {
+	body := loadTestData(t, "lines.json")
+	mock := newMockDoer(body)
+
+	_, handler := LinesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"group_of_lines": "blåbuss"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var lines []map[string]any
+	_ = json.Unmarshal([]byte(text), &lines)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 blåbuss entries, got %d: %v", len(lines), lines)
+	}
+	// Slim shape must carry group_of_lines; it's one of the kept fields.
+	for _, l := range lines {
+		if g, _ := l["group_of_lines"].(string); !strings.EqualFold(g, "blåbuss") {
+			t.Errorf("expected group_of_lines=blåbuss, got %q", g)
+		}
+	}
+}
+
 func TestLinesTool_QueryFiltersByName(t *testing.T) {
 	body := loadTestData(t, "lines.json")
 	mock := newMockDoer(body)

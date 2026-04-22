@@ -159,13 +159,14 @@ func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 
 func LinesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("lines",
-		mcp.WithDescription("Enumerate SL's catalog of transit lines and their canonical numeric ids. Returns a flat JSON array of line objects (upstream groups them by mode, but each object carries transport_mode so the grouping adds no information). The full catalog is ~600 entries; always narrow the result with transport_mode, designation, group_of_lines, or query before reading it into an LLM context. Default limit is 50; pass limit=0 to page through the full catalog."),
+		mcp.WithDescription("Enumerate SL's catalog of transit lines and their canonical numeric ids. Returns a flat JSON array — by default slimmed to {id, designation, transport_mode, group_of_lines, name}; set verbose=true for the full upstream fields (gid, transport_authority, contractor, valid). The full catalog is ~600 entries; always narrow the result with transport_mode, designation, or group_of_lines before reading it into an LLM context. Default limit is 50; pass limit=0 to page through the full catalog."),
 		mcp.WithNumber("transport_authority_id", mcp.Description("Transport authority ID from the transport_authorities tool. Defaults to 1 (Storstockholms Lokaltrafik).")),
 		mcp.WithString("transport_mode", mcp.Description("Restrict to a single mode (case-insensitive): metro, bus, tram, train, ferry, ship, taxi. Unknown modes return an empty array.")),
 		mcp.WithString("designation", mcp.Description("Prefix match on the line's designation. '54' matches 54 / 540 / 541 / 542 / …. Narrower than query; prefer this when searching by line number.")),
 		mcp.WithString("group_of_lines", mcp.Description("Case-insensitive substring match on the group_of_lines field. Examples: 'pendeltåg', 'blåbuss', 'närtrafiken'.")),
 		mcp.WithString("query", mcp.Description("Case-insensitive substring match on line name OR designation. Example: 'röda' matches the Red metro lines; '471' matches bus 471. Broader than designation.")),
 		mcp.WithNumber("limit", mcp.Description("Maximum number of lines to return. Defaults to 50; pass 0 for unlimited.")),
+		mcp.WithBoolean("verbose", mcp.Description("Return the full upstream shape per line (includes gid, transport_authority, contractor, valid, etc.). Default false (slim: id, designation, transport_mode, group_of_lines, name).")),
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -176,6 +177,7 @@ func LinesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 			designation:  strings.ToLower(request.GetString("designation", "")),
 			groupOfLines: strings.ToLower(request.GetString("group_of_lines", "")),
 			limit:        request.GetInt("limit", defaultLinesLimit),
+			verbose:      request.GetBool("verbose", false),
 		}
 
 		params := url.Values{"transport_authority_id": {fmt.Sprintf("%d", authorityID)}}
