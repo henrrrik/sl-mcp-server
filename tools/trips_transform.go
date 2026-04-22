@@ -34,11 +34,30 @@ type upstreamLeg struct {
 }
 
 type upstreamStopEvent struct {
-	Name                   string `json:"name"`
-	DepartureTimePlanned   string `json:"departureTimePlanned"`
-	DepartureTimeEstimated string `json:"departureTimeEstimated"`
-	ArrivalTimePlanned     string `json:"arrivalTimePlanned"`
-	ArrivalTimeEstimated   string `json:"arrivalTimeEstimated"`
+	ID                     string              `json:"id"`
+	Name                   string              `json:"name"`
+	Type                   string              `json:"type"`
+	Coord                  []float64           `json:"coord"`
+	Parent                 *upstreamStopParent `json:"parent,omitempty"`
+	DepartureTimePlanned   string              `json:"departureTimePlanned"`
+	DepartureTimeEstimated string              `json:"departureTimeEstimated"`
+	ArrivalTimePlanned     string              `json:"arrivalTimePlanned"`
+	ArrivalTimeEstimated   string              `json:"arrivalTimeEstimated"`
+}
+
+// upstreamStopParent is the enclosing stop for a platform-level stop event.
+// Only the subset of fields used for the resolved-echo and stop-type guard
+// is decoded — everything else on the upstream struct is ignored.
+type upstreamStopParent struct {
+	ID         string                 `json:"id"`
+	Name       string                 `json:"name"`
+	Type       string                 `json:"type"`
+	Coord      []float64              `json:"coord"`
+	Properties upstreamStopProperties `json:"properties"`
+}
+
+type upstreamStopProperties struct {
+	StopID string `json:"stopId"`
 }
 
 type upstreamTransportation struct {
@@ -60,6 +79,23 @@ type upstreamTransportDest struct {
 type trimmedTrips struct {
 	Journeys       []trimmedJourney  `json:"journeys"`
 	SystemMessages []json.RawMessage `json:"systemMessages,omitempty"`
+	Resolved       *resolvedTrip     `json:"resolved,omitempty"`
+}
+
+// resolvedTrip echoes the actual origin/destination the planner used, so
+// callers can detect silent drift when fuzzy name matching produced a
+// different location than they expected.
+type resolvedTrip struct {
+	Origin      resolvedLocation `json:"origin"`
+	Destination resolvedLocation `json:"destination"`
+}
+
+type resolvedLocation struct {
+	Name   string    `json:"name,omitempty"`
+	ID     string    `json:"id,omitempty"`      // 16-digit GID when the upstream supplied one.
+	SiteID int       `json:"site_id,omitempty"` // short form, when derivable.
+	Type   string    `json:"type,omitempty"`    // stop / platform / poi / address / locality.
+	Coord  []float64 `json:"coord,omitempty"`
 }
 
 type trimmedJourney struct {
@@ -485,6 +521,80 @@ func deviationActiveAt(d legDeviation, at time.Time) bool {
 		return true
 	}
 	return !at.Before(from) && !at.After(upto)
+}
+
+// extractResolved derives the resolved-origin / resolved-destination block
+// from a raw /v2/trips response. Returns nil on malformed JSON or on
+// error-only responses (no journeys), so the caller can omit the field.
+//
+// When a leg endpoint is a platform with a stop parent, the stop's name and
+// id are surfaced (that's the useful disambiguation level for callers); the
+// platform coord stays because platforms are more geographically precise.
+func extractResolved(body []byte) *resolvedTrip {
+	origin, dest, ok := firstLegEndpoints(body)
+	if !ok {
+		return nil
+	}
+	return &resolvedTrip{
+		Origin:      resolvedFromStopEvent(origin),
+		Destination: resolvedFromStopEvent(dest),
+	}
+}
+
+// resolvedFromStopEvent synthesizes the echo-able shape from an upstream
+// stop event. Uses the parent's stop identity when present (that's the
+// "station" a human recognizes, not the platform), and falls back to the
+// stop event itself otherwise.
+func resolvedFromStopEvent(e upstreamStopEvent) resolvedLocation {
+	out := resolvedLocation{
+		Name:  e.Name,
+		ID:    e.ID,
+		Type:  e.Type,
+		Coord: e.Coord,
+	}
+	if e.Parent != nil && e.Parent.Type == "stop" {
+		out.Name = e.Parent.Name
+		out.ID = e.Parent.ID
+		out.Type = e.Parent.Type
+		// Prefer the platform coord (more precise) but fall back to parent.
+		if len(out.Coord) == 0 && len(e.Parent.Coord) >= 2 {
+			out.Coord = e.Parent.Coord
+		}
+	}
+	// Derive the short site id from whichever id we have. Try the parent's
+	// 8-digit stopId first (clean short form); fall back to GID normalization.
+	if e.Parent != nil && e.Parent.Properties.StopID != "" {
+		if short, err := normalizeSiteID(e.Parent.Properties.StopID); err == nil {
+			out.SiteID = short
+		}
+	}
+	if out.SiteID == 0 && out.ID != "" {
+		if short, err := normalizeSiteID(out.ID); err == nil {
+			out.SiteID = short
+		}
+	}
+	return out
+}
+
+// injectVerboseResolved decodes the raw /v2/trips body, injects the resolved
+// echo block at top-level, and re-marshals. Used by verbose=true so callers
+// still see the resolved section even when the rest of the payload is
+// passed through untrimmed.
+func injectVerboseResolved(body []byte) ([]byte, error) {
+	resolved := extractResolved(body)
+	if resolved == nil {
+		return body, nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, err
+	}
+	r, err := json.Marshal(resolved)
+	if err != nil {
+		return nil, err
+	}
+	raw["resolved"] = r
+	return json.Marshal(raw)
 }
 
 // resolveCandidates fetches /v2/stop-finder for the given query and returns

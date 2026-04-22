@@ -15,7 +15,7 @@ func NewSLServer(client slclient.HTTPDoer) *server.MCPServer {
 
 	s := server.NewMCPServer(
 		"sl-mcp-server",
-		"1.0.0",
+		"1.1.0",
 		server.WithToolCapabilities(true),
 	)
 

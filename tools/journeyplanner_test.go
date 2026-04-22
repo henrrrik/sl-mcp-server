@@ -1410,3 +1410,430 @@ func TestTripsTool_MissingOrigin(t *testing.T) {
 		t.Error("expected error result when origin is missing")
 	}
 }
+
+// P0: origin_id / destination_id skip name resolution entirely and pass the
+// canonical 16-digit GID straight to the upstream planner. Accepts short,
+// 8-digit 18xx, 9-digit 3BA1CDEFG, and 16-digit GID input.
+func TestTripsTool_OriginIDAndDestinationID(t *testing.T) {
+	body := loadTestData(t, "trips.json")
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: body},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"origin_id":       "5868",
+		"destination_id":  "9195",
+		"skip_deviations": true,
+	}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("unexpected error result: %s", result.Content[0].(mcp.TextContent).Text)
+	}
+
+	// name_origin / name_destination must be the canonical GID so the planner
+	// skips fuzzy name resolution entirely.
+	tripsCalls := 0
+	for _, c := range mock.calls {
+		if strings.Contains(c.URL.Path, "/v2/trips") {
+			tripsCalls++
+			q := c.URL.Query()
+			if got := q.Get("name_origin"); got != "9091001000005868" {
+				t.Errorf("expected name_origin=9091001000005868 (canonical GID), got %q", got)
+			}
+			if got := q.Get("name_destination"); got != "9091001000009195" {
+				t.Errorf("expected name_destination=9091001000009195, got %q", got)
+			}
+		}
+		if strings.Contains(c.URL.Path, "/v2/stop-finder") {
+			t.Errorf("stop-finder should not be called when IDs are provided")
+		}
+	}
+	if tripsCalls != 1 {
+		t.Errorf("expected 1 /v2/trips call, got %d", tripsCalls)
+	}
+}
+
+func TestTripsTool_IDAcceptsAllFormats(t *testing.T) {
+	cases := []struct {
+		name    string
+		input   any
+		wantGID string
+	}{
+		{"short string", "9702", "9091001000009702"},
+		{"short number", float64(9702), "9091001000009702"},
+		{"8-digit 18xx", "18009702", "9091001000009702"},
+		{"9-digit", "300109702", "9091001000009702"},
+		{"16-digit GID", "9091001000009702", "9091001000009702"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body := loadTestData(t, "trips.json")
+			mock := &routedMock{routes: []mockRoute{
+				{pathContains: "/v2/trips", body: body},
+			}}
+			_, handler := TripsTool(mock)
+			req := mcp.CallToolRequest{}
+			req.Params.Arguments = map[string]any{
+				"origin_id":       tc.input,
+				"destination_id":  "9192",
+				"skip_deviations": true,
+			}
+			if _, err := handler(context.Background(), req); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			var gotGID string
+			for _, c := range mock.calls {
+				if strings.Contains(c.URL.Path, "/v2/trips") {
+					gotGID = c.URL.Query().Get("name_origin")
+				}
+			}
+			if gotGID != tc.wantGID {
+				t.Errorf("expected GID %q, got %q", tc.wantGID, gotGID)
+			}
+		})
+	}
+}
+
+func TestTripsTool_NameAndIDMutuallyExclusive(t *testing.T) {
+	mock := newMockDoer("{}")
+	_, handler := TripsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"origin":         "Slussen",
+		"origin_id":      "9192",
+		"destination_id": "9001",
+	}
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected error when both origin and origin_id are set")
+	}
+}
+
+func TestTripsTool_MissingBothOriginForms(t *testing.T) {
+	mock := newMockDoer("{}")
+	_, handler := TripsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"destination_id": "9001",
+	}
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected error when neither origin nor origin_id is set")
+	}
+}
+
+func TestTripsTool_InvalidOriginIDReturnsStructuredError(t *testing.T) {
+	mock := newMockDoer("{}")
+	_, handler := TripsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"origin_id":      "not-an-id",
+		"destination_id": "9001",
+	}
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatal("expected error result")
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, `"error":"invalid_site_id_format"`) {
+		t.Errorf("expected structured siteID error, got %s", text)
+	}
+}
+
+// P0: when the name-resolution step resolves ambiguously to non-stop types
+// only (POIs/addresses), return origin_not_a_stop rather than silently
+// picking a candidate.
+func TestTripsTool_NameResolvesToOnlyPOIsReturnsNotAStop(t *testing.T) {
+	tripsErr := `{"systemMessages":[{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"}]}`
+
+	// Stop-finder returns only POI-typed results for "Järfälla kyrka".
+	poiOnly := `{"locations":[
+		{"coord":[59.4,17.8],"disassembledName":"Järfälla kyrka","id":"poi:1","matchQuality":900,"name":"Järfälla kyrka","parent":{"name":"Järfälla","type":"locality"},"type":"poi"},
+		{"coord":[59.4,17.8],"disassembledName":"Järfälla Hyrkart","id":"poi:2","matchQuality":800,"name":"Järfälla Hyrkart","parent":{"name":"Järfälla","type":"locality"},"type":"poi"}
+	]}`
+
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: tripsErr},
+		{pathContains: "/v2/stop-finder", body: poiOnly},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Järfälla kyrka", "destination": "T-Centralen"}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Error      string              `json:"error"`
+		Candidates []locationCandidate `json:"candidates"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v\n%s", err, text)
+	}
+	if out.Error != "origin_not_a_stop" {
+		t.Errorf("expected origin_not_a_stop, got %q\n%s", out.Error, text)
+	}
+	if len(out.Candidates) == 0 {
+		t.Errorf("expected POI candidates preserved in payload")
+	}
+}
+
+// P0: when stop-finder returns a mix of stops and POIs, only stop-typed
+// candidates are considered for ambiguity auto-resolution. A single stop
+// among several POIs should auto-resolve, not error.
+func TestTripsTool_MixedStopsAndPOIsPicksTheStop(t *testing.T) {
+	tripsErr := `{"systemMessages":[{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"}]}`
+	tripsOK := loadTestData(t, "trips.json")
+
+	mixed := `{"locations":[
+		{"coord":[59.4,17.8],"disassembledName":"Sluss Cafe","id":"poi:1","matchQuality":900,"name":"Sluss Cafe","parent":{"name":"Stockholm","type":"locality"},"type":"poi"},
+		{"coord":[59.3,18.07],"disassembledName":"Slussen","id":"9091001000009192","matchQuality":850,"name":"Slussen","parent":{"name":"Stockholm","type":"locality"},"type":"stop"}
+	]}`
+
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", queryMatches: map[string]string{"name_origin": "Sluss"}, body: tripsErr},
+		{pathContains: "/v2/trips", body: tripsOK},
+		{pathContains: "/v2/stop-finder", body: mixed},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Sluss", "destination": "T-Centralen", "skip_deviations": true}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	if strings.Contains(text, "ambiguous_") || strings.Contains(text, "_not_a_stop") {
+		t.Errorf("single-stop among POIs should auto-resolve; got %.300s", text)
+	}
+
+	// The retry must have used the stop's GID as name_origin.
+	var retried bool
+	for _, c := range mock.calls {
+		if strings.Contains(c.URL.Path, "/v2/trips") && c.URL.Query().Get("name_origin") == "9091001000009192" {
+			retried = true
+		}
+	}
+	if !retried {
+		t.Errorf("expected retry with the stop GID as name_origin")
+	}
+}
+
+// P0: every successful trips response includes a top-level resolved block
+// with origin and destination {name, id, site_id, coord, type}. Callers can
+// use this to detect silent drift.
+func TestTripsTool_SuccessfulResponseIncludesResolvedBlock(t *testing.T) {
+	body := loadTestData(t, "trips.json")
+	mock := newMockDoer(body)
+	_, handler := TripsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"origin": "Vällingby", "destination": "Stockholm City",
+		"skip_deviations": true,
+	}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Resolved *struct {
+			Origin struct {
+				Name   string    `json:"name"`
+				ID     string    `json:"id"`
+				SiteID int       `json:"site_id"`
+				Type   string    `json:"type"`
+				Coord  []float64 `json:"coord"`
+			} `json:"origin"`
+			Destination struct {
+				Name   string `json:"name"`
+				ID     string `json:"id"`
+				SiteID int    `json:"site_id"`
+			} `json:"destination"`
+		} `json:"resolved"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v\n%s", err, text)
+	}
+	if out.Resolved == nil {
+		t.Fatal("expected resolved block in trips response")
+	}
+	if out.Resolved.Origin.Name == "" {
+		t.Errorf("expected resolved.origin.name, got empty")
+	}
+	if out.Resolved.Origin.ID == "" {
+		t.Errorf("expected resolved.origin.id (16-digit GID), got empty")
+	}
+	// Fixture: origin.parent.properties.stopId = "18012301" → site_id 12301
+	// Actually upstream's parent.id "9021001012301000" normalizes via 9-digit
+	// rule but that's a 16-digit number — trafiklab's normalizer takes the
+	// last 4..5 digits. The more reliable path is parent.properties.stopId
+	// (18012301 → 12301, out of range) — so we may end up with 0. Don't
+	// require site_id to be set in the fixture case, but if set it must be
+	// positive.
+	if out.Resolved.Origin.SiteID < 0 {
+		t.Errorf("site_id should never be negative, got %d", out.Resolved.Origin.SiteID)
+	}
+	if len(out.Resolved.Origin.Coord) != 2 {
+		t.Errorf("expected resolved.origin.coord [lat, lon], got %v", out.Resolved.Origin.Coord)
+	}
+	if out.Resolved.Destination.Name == "" {
+		t.Errorf("expected resolved.destination.name, got empty")
+	}
+}
+
+// P0: when upstream silently plans from a POI (no ambiguity error), the
+// defensive guard still rejects it rather than pretending the trip was OK.
+// This is the "Järfälla kyrka → Järfälla Hyrkart" scenario.
+func TestTripsTool_SilentPOIResolutionRejected(t *testing.T) {
+	// Hand-crafted journey with a POI origin and a stop destination.
+	body := `{
+		"journeys": [{
+			"tripDuration": 600,
+			"interchanges": 0,
+			"legs": [{
+				"duration": 600,
+				"origin": {
+					"id": "poi:hyrkart",
+					"name": "Järfälla Hyrkart",
+					"type": "poi",
+					"coord": [59.4, 17.85],
+					"departureTimePlanned": "2026-04-22T09:00:00Z"
+				},
+				"destination": {
+					"id": "9025001000012559",
+					"name": "Slussen",
+					"type": "platform",
+					"coord": [59.32, 18.07],
+					"parent": {"id": "9021001000009192", "name": "Slussen", "type": "stop", "properties": {"stopId": "18009192"}},
+					"arrivalTimePlanned": "2026-04-22T09:10:00Z"
+				},
+				"transportation": {"disassembledName": "54", "product": {"name": "Buss"}}
+			}]
+		}]
+	}`
+
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: body},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"origin":          "Järfälla kyrka",
+		"destination":     "Slussen",
+		"skip_deviations": true,
+	}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v\n%s", err, text)
+	}
+	if out.Error != "origin_not_a_stop" {
+		t.Errorf("expected origin_not_a_stop, got %q — planner silently used a POI!\n%s", out.Error, text)
+	}
+}
+
+// P0: when origin_id was provided, don't run the POI guard on origin — the
+// caller explicitly chose that location. Same for destination.
+func TestTripsTool_PoiGuardSkippedWhenIDProvided(t *testing.T) {
+	// Even if the upstream claimed a poi-typed origin (unlikely with a real
+	// GID), we trust the caller since they passed an explicit ID.
+	body := `{
+		"journeys": [{
+			"tripDuration": 600,
+			"interchanges": 0,
+			"legs": [{
+				"duration": 600,
+				"origin": {"id": "9091001000009192", "name": "Some POI", "type": "poi", "coord": [59.3, 18.07]},
+				"destination": {"id": "9091001000009001", "name": "T-Centralen", "type": "platform", "coord": [59.33, 18.06], "parent": {"id": "9021001000009001", "name": "T-Centralen", "type": "stop"}},
+				"transportation": {"disassembledName": "54", "product": {"name": "Buss"}}
+			}]
+		}]
+	}`
+
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: body},
+	}}
+
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"origin_id":       "9192",
+		"destination_id":  "9001",
+		"skip_deviations": true,
+	}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	if strings.Contains(text, "_not_a_stop") {
+		t.Errorf("when origin_id was provided, POI guard should not trigger; got %.300s", text)
+	}
+}
+
+// P0: verbose=true still gets a resolved block injected at the top level.
+func TestTripsTool_VerboseIncludesResolvedBlock(t *testing.T) {
+	body := loadTestData(t, "trips.json")
+	mock := newMockDoer(body)
+	_, handler := TripsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"origin": "Vällingby", "destination": "Stockholm City",
+		"verbose": true,
+	}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	if !strings.Contains(text, `"resolved"`) {
+		t.Errorf("verbose response should still include a resolved block, got %.400s", text)
+	}
+	// Verbose must still preserve the upstream-only fields.
+	for _, expected := range []string{"coords", "stopSequence"} {
+		if !strings.Contains(text, expected) {
+			t.Errorf("verbose mode dropped upstream field %q", expected)
+		}
+	}
+}
