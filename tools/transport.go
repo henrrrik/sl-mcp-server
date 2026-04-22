@@ -98,12 +98,13 @@ func SitesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 
 func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("departures",
-		mcp.WithDescription("Get real-time departures from an SL transit site. Accepts the short-form site_id from SL:sites, the 8-digit 18xx form from SL:stop_finder.properties.stopId, or the 16-digit GID from SL:stop_finder.id — all are normalized to the short form before the upstream call. For busy terminals, narrow the result with transport_mode, line, direction_code, and/or limit. The returned stop_deviations are rebuilt from /v1/messages, filtered to scopes that touch this site's stop_areas, stop_points, or lines — with a fallback to filtering upstream's raw list if /v1/messages is unreachable."),
+		mcp.WithDescription("Get real-time departures from an SL transit site. Accepts the short-form site_id from SL:sites, the 8-digit 18xx form from SL:stop_finder.properties.stopId, or the 16-digit GID from SL:stop_finder.id — all are normalized to the short form before the upstream call. For busy terminals, narrow the result with transport_mode / line / direction_code / limit. By default, per-row stop_area / journey internals are dropped (every row belongs to the queried site) and line is slimmed to designation/transport_mode/group_of_lines; set verbose=true for the full upstream shape. stop_deviations are rebuilt from /v1/messages, filtered to scopes that touch this site — with a fallback to the upstream's raw list if /v1/messages is unreachable."),
 		mcp.WithString("site_id", mcp.Required(), mcp.Description("Site ID. Accepts the short form from SL:sites (e.g. \"9702\"), the 8-digit form from stop_finder.properties.stopId (e.g. \"18009702\"), or the 16-digit GID from stop_finder.id (e.g. \"9091001000009702\"). All are normalized to the short form before the upstream call. Pass as a string — 16-digit GIDs exceed JS Number.MAX_SAFE_INTEGER and lose precision if typed as a number.")),
 		mcp.WithString("transport_mode", mcp.Description("Filter departures by line mode: BUS, METRO, TRAIN, TRAM, SHIP, FERRY, TAXI. Case-insensitive.")),
 		mcp.WithString("line", mcp.Description("Filter departures by line designation (exact match on the line's designation field, case-insensitive). Example: \"43\" returns only pendeltåg 43.")),
 		mcp.WithNumber("direction_code", mcp.Description("Filter departures by direction code (SL's upstream field; typically 1 or 2). Use to show only departures heading one way.")),
 		mcp.WithNumber("limit", mcp.Description("Maximum number of departures to return after filtering. Omitted or 0 means no truncation (keeps the upstream's default page size).")),
+		mcp.WithBoolean("verbose", mcp.Description("Preserve per-departure stop_area / journey / full line object. Default false (slim: stop_area and journey dropped, line reduced to designation/transport_mode/group_of_lines).")),
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -146,7 +147,7 @@ func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 		msgsURL := slclient.BuildURL(deviationsBase, "/v1/messages", url.Values{"future": {"true"}})
 		msgsBody, _ := fetchJSONRaw(ctx, client, msgsURL)
 
-		trimmed, err := trimDepartures(body, msgsBody, filters)
+		trimmed, err := trimDepartures(body, msgsBody, filters, request.GetBool("verbose", false))
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to reshape departures response: %v", err)), nil
 		}
