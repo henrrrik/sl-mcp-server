@@ -12,6 +12,22 @@
   resolved) to this tool, pick a stop, then call `departures` / `trips`
   with the resulting `site_id`.
 
+### resolve (new tool)
+
+- `resolve(query)` is the canonical "turn a name into an id" primitive.
+  Returns the single best stop match with all three id forms (short
+  `site_id`, 8-digit 18xx `gid_180`, 16-digit `gid_16`) plus a
+  `candidates` array of runners-up. POIs and addresses are preserved in
+  `candidates` for recovery but never surface as `best`.
+
+### deviations
+
+- `site` now accepts the same four id formats `departures` does: short,
+  8-digit 18xx, 9-digit 3BA1CDEFG, and 16-digit GID. Pass as a string;
+  16-digit GIDs exceed JS Number.MAX_SAFE_INTEGER.
+- Invalid `site` input is echoed back as a decimal string, never as
+  scientific notation (`9091001000000000`, not `9.09e+15`).
+
 ### departures
 
 - New optional filters applied after the upstream fetch:
@@ -21,6 +37,8 @@
   - `limit` — truncate the filtered result.
 - stop_deviations are re-derived from the filtered departures, so a
   `line=40` query doesn't carry a deviation that only affects line 43.
+- Invalid `site_id` errors now echo the input as a decimal string (same
+  fix as `deviations`).
 
 ### lines
 

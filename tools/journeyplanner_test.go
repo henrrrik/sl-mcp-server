@@ -233,6 +233,130 @@ func TestStopFinderTool_MissingName(t *testing.T) {
 	}
 }
 
+// P1: resolve returns the best stop-typed match with all three id forms.
+func TestResolveTool_ReturnsBestWithAllIDForms(t *testing.T) {
+	body := loadTestData(t, "stop_finder.json")
+	mock := newMockDoer(body)
+
+	_, handler := ResolveTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": "Slussen"}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	q := mock.lastReq.URL.Query()
+	if q.Get("name_sf") != "Slussen" {
+		t.Errorf("expected name_sf=Slussen, got %q", q.Get("name_sf"))
+	}
+
+	text := result.Content[0].(mcp.TextContent).Text
+	var out struct {
+		Best *struct {
+			Name         string    `json:"name"`
+			ShortID      int       `json:"short_id"`
+			GID180       string    `json:"gid_180"`
+			GID16        string    `json:"gid_16"`
+			Type         string    `json:"type"`
+			MatchQuality int       `json:"match_quality"`
+			Coord        []float64 `json:"coord"`
+		} `json:"best"`
+		Candidates []struct {
+			Type string `json:"type"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v\n%s", err, text)
+	}
+	if out.Best == nil {
+		t.Fatal("expected best to be populated")
+	}
+	if out.Best.Type != "stop" {
+		t.Errorf("best.type should be stop (POIs never win), got %q", out.Best.Type)
+	}
+	if out.Best.ShortID != 9192 {
+		t.Errorf("expected short_id=9192 (Slussen), got %d", out.Best.ShortID)
+	}
+	if out.Best.GID16 != "9091001000009192" {
+		t.Errorf("expected gid_16=9091001000009192, got %q", out.Best.GID16)
+	}
+	if out.Best.GID180 != "18009192" {
+		t.Errorf("expected gid_180=18009192, got %q", out.Best.GID180)
+	}
+	if out.Best.MatchQuality != 1000 {
+		t.Errorf("expected match_quality=1000, got %d", out.Best.MatchQuality)
+	}
+
+	// Fixture: Slussplan (stop, 850) + Slussen T-bana (POI, 700) — both
+	// should land in candidates.
+	if len(out.Candidates) != 2 {
+		t.Fatalf("expected 2 candidates, got %d", len(out.Candidates))
+	}
+	var gotPOI, gotStop bool
+	for _, c := range out.Candidates {
+		switch c.Type {
+		case "stop":
+			gotStop = true
+		case "poi":
+			gotPOI = true
+		}
+	}
+	if !gotStop || !gotPOI {
+		t.Errorf("expected stop+poi in candidates, got %+v", out.Candidates)
+	}
+}
+
+func TestResolveTool_MissingQuery(t *testing.T) {
+	mock := newMockDoer("{}")
+	_, handler := ResolveTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Error("expected error result when query is missing")
+	}
+}
+
+// P1: when stop_finder returns only POIs, best is nil and POIs surface
+// as candidates so callers can recover.
+func TestResolveTool_OnlyPOIsLeavesBestEmpty(t *testing.T) {
+	body := `{"locations":[
+		{"coord":[59.4,17.8],"disassembledName":"Järfälla Hyrkart","id":"poi:1","matchQuality":900,"name":"Järfälla Hyrkart","parent":{"name":"Järfälla"},"type":"poi"}
+	]}`
+	mock := newMockDoer(body)
+	_, handler := ResolveTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": "Järfälla Hyrkart"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Best       any `json:"best"`
+		Candidates []struct {
+			Type string `json:"type"`
+		} `json:"candidates"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if out.Best != nil {
+		t.Errorf("best should be absent when no stops match, got %+v", out.Best)
+	}
+	if len(out.Candidates) != 1 || out.Candidates[0].Type != "poi" {
+		t.Errorf("expected POI candidate preserved, got %+v", out.Candidates)
+	}
+}
+
 func TestTripsTool(t *testing.T) {
 	body := loadTestData(t, "trips.json")
 	mock := newMockDoer(body)
