@@ -27,6 +27,12 @@
   16-digit GIDs exceed JS Number.MAX_SAFE_INTEGER.
 - Invalid `site` input is echoed back as a decimal string, never as
   scientific notation (`9091001000000000`, not `9.09e+15`).
+- New default shape: each entry carries only `{deviation_case_id, header,
+  details, publish_from, publish_upto, lines: [designation], stop_areas:
+  [name], categories}`. Previously-noisy fields (version, created,
+  priority levels, nested transport_authority, href links, every
+  language variant) are dropped in the default.
+- `verbose=true` preserves the full upstream payload exactly.
 
 ### departures
 
@@ -39,6 +45,13 @@
   `line=40` query doesn't carry a deviation that only affects line 43.
 - Invalid `site_id` errors now echo the input as a decimal string (same
   fix as `deviations`).
+- New default shape drops per-row redundancy: `stop_area` (uniform across
+  the query) and `journey` (internal upstream state) are removed; `line`
+  is slimmed to `{designation, transport_mode, group_of_lines}`; the
+  `stop_point` retained is just its `designation` (the track/platform
+  number).
+- `verbose=true` preserves the pre-change shape (stop_area / journey /
+  full line intact, rederived stop_deviations still applied).
 
 ### lines
 

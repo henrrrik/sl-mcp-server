@@ -36,9 +36,15 @@ type departuresFilters struct {
 // has been determined) and broken "null/..." href values are stripped.
 //
 // The `filters` argument applies transport_mode / line / direction_code /
-// limit to the departures array before the response is marshaled. Zero-
-// valued fields are ignored — the default is "no filtering".
-func trimDepartures(depBody, msgsBody []byte, filters departuresFilters) ([]byte, error) {
+// limit to the departures array before stop_deviations are re-derived.
+// Zero-valued fields are ignored — the default is "no filtering".
+//
+// When verbose=false, the departures array is also slimmed — per-departure
+// stop_area is dropped (every row belongs to the queried site, so it's
+// redundant), journey internals are dropped, stop_point is reduced to just
+// its designation, and line is flattened to {designation, transport_mode,
+// group_of_lines}. When verbose=true, those fields are preserved verbatim.
+func trimDepartures(depBody, msgsBody []byte, filters departuresFilters, verbose bool) ([]byte, error) {
 	var root map[string]any
 	if err := json.Unmarshal(depBody, &root); err != nil {
 		return nil, err
@@ -65,6 +71,12 @@ func trimDepartures(depBody, msgsBody []byte, filters departuresFilters) ([]byte
 
 	stripStopDeviationNoise(stopDeviations)
 	root["stop_deviations"] = stopDeviations
+
+	if !verbose {
+		if deps, ok := root["departures"].([]any); ok {
+			root["departures"] = slimDepartures(deps)
+		}
+	}
 	return json.Marshal(root)
 }
 
@@ -115,6 +127,36 @@ func departureMatches(dep map[string]any, f departuresFilters) bool {
 		}
 	}
 	return true
+}
+
+// slimDepartures drops per-row redundancy from the departures array. Every
+// row belongs to the queried site, so stop_area is uniform across the array
+// and adds nothing. journey.* carries internal upstream state that callers
+// don't need. line.* keeps only the human-readable fields; stop_point is
+// reduced to its designation (the track/platform number).
+func slimDepartures(deps []any) []any {
+	out := make([]any, 0, len(deps))
+	for _, depAny := range deps {
+		dep, ok := depAny.(map[string]any)
+		if !ok {
+			out = append(out, depAny)
+			continue
+		}
+		delete(dep, "stop_area")
+		delete(dep, "journey")
+		if sp, ok := dep["stop_point"].(map[string]any); ok {
+			dep["stop_point"] = map[string]any{"designation": sp["designation"]}
+		}
+		if line, ok := dep["line"].(map[string]any); ok {
+			dep["line"] = map[string]any{
+				"designation":    line["designation"],
+				"transport_mode": line["transport_mode"],
+				"group_of_lines": line["group_of_lines"],
+			}
+		}
+		out = append(out, dep)
+	}
+	return out
 }
 
 // siteIdentity is the set of identifiers that define "this site" for the

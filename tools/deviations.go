@@ -15,11 +15,12 @@ const deviationsBase = "https://deviations.integration.sl.se"
 
 func DeviationsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("deviations",
-		mcp.WithDescription("Get SL traffic deviations and disruptions in Stockholm public transport."),
+		mcp.WithDescription("Get SL traffic deviations and disruptions in Stockholm public transport. Returns a slim summary per deviation by default (deviation_case_id, header, details, publish window, affected lines/stop_areas, categories) — set verbose=true for the full upstream payload with importance levels, scope metadata, href links, and all language variants."),
 		mcp.WithBoolean("future", mcp.Description("Include future deviations")),
 		mcp.WithString("site", mcp.Description("Filter by site. Accepts the short-form site_id (e.g. \"9001\" for T-Centralen), the 8-digit 18xx form, the 9-digit 3BA1CDEFG form, or the 16-digit GID — all normalized to the short form before the upstream call. Pass as a string; 16-digit GIDs exceed JS Number.MAX_SAFE_INTEGER.")),
 		mcp.WithNumber("line", mcp.Description("Filter by line number")),
 		mcp.WithString("transport_mode", mcp.Description("Filter by mode: BUS, METRO, TRAIN, TRAM, SHIP, FERRY")),
+		mcp.WithBoolean("verbose", mcp.Description("Return the raw upstream payload with every field (version, created, priority, full scope, href links). Default false (slim summary).")),
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -41,7 +42,20 @@ func DeviationsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 		}
 
 		u := slclient.BuildURL(deviationsBase, "/v1/messages", params)
-		return fetchJSON(ctx, client, u)
+
+		if request.GetBool("verbose", false) {
+			return fetchJSON(ctx, client, u)
+		}
+
+		body, errResult := fetchJSONRaw(ctx, client, u)
+		if errResult != nil {
+			return errResult, nil
+		}
+		slim, err := trimDeviationsList(body)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to reshape deviations response: %v", err)), nil
+		}
+		return mcp.NewToolResultText(string(slim)), nil
 	}
 
 	return tool, handler

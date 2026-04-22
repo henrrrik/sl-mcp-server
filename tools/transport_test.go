@@ -186,8 +186,10 @@ func TestDeparturesTool(t *testing.T) {
 	}
 
 	text := result.Content[0].(mcp.TextContent).Text
-	if !strings.Contains(text, "Stockholm City") {
-		t.Error("result should contain fixture departure data")
+	// Slim mode drops per-row stop_area ("Stockholm City"); destination
+	// field survives and identifies each departure.
+	if !strings.Contains(text, "Västerhaninge") {
+		t.Error("result should contain fixture departure data (Västerhaninge destination)")
 	}
 }
 
@@ -670,6 +672,169 @@ func TestDeparturesTool_FiltersCompose(t *testing.T) {
 	}
 	if out.Departures[0].Line.Designation != "40" {
 		t.Errorf("expected designation=40, got %q", out.Departures[0].Line.Designation)
+	}
+}
+
+// P2: default response drops per-row stop_area and journey from each
+// departure entry, and slims the line object to designation /
+// transport_mode / group_of_lines. Payload is materially smaller than
+// verbose.
+func TestDeparturesTool_DefaultSlimsPerRowRedundancy(t *testing.T) {
+	body := loadTestData(t, "departures.json")
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/departures", body: body},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
+
+	_, handler := DeparturesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": float64(9192)}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Departures []map[string]any `json:"departures"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v\n%s", err, text)
+	}
+	for i, dep := range out.Departures {
+		if _, ok := dep["stop_area"]; ok {
+			t.Errorf("dep[%d]: stop_area should be dropped in slim mode", i)
+		}
+		if _, ok := dep["journey"]; ok {
+			t.Errorf("dep[%d]: journey should be dropped in slim mode", i)
+		}
+		line, ok := dep["line"].(map[string]any)
+		if !ok {
+			t.Fatalf("dep[%d]: expected line object", i)
+		}
+		// Line should only carry designation / transport_mode /
+		// group_of_lines in slim mode.
+		for k := range line {
+			switch k {
+			case "designation", "transport_mode", "group_of_lines":
+				// ok
+			default:
+				t.Errorf("dep[%d].line: unexpected field %q in slim mode", i, k)
+			}
+		}
+	}
+}
+
+// P2: verbose=true preserves the full per-row stop_area / journey / line.
+func TestDeparturesTool_VerbosePreservesFullRow(t *testing.T) {
+	body := loadTestData(t, "departures.json")
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/departures", body: body},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
+
+	_, handler := DeparturesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": float64(9192), "verbose": true}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Departures []map[string]any `json:"departures"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if len(out.Departures) == 0 {
+		t.Fatal("expected departures")
+	}
+	if _, ok := out.Departures[0]["stop_area"]; !ok {
+		t.Errorf("verbose mode should preserve stop_area")
+	}
+	if _, ok := out.Departures[0]["journey"]; !ok {
+		t.Errorf("verbose mode should preserve journey")
+	}
+	line, _ := out.Departures[0]["line"].(map[string]any)
+	if _, ok := line["id"]; !ok {
+		t.Errorf("verbose mode should preserve line.id")
+	}
+}
+
+// P2: payload slimming must materially shrink the response for a busy
+// terminal. Generate 35 departures all pointing at the same site and
+// compare sizes.
+func TestDeparturesTool_DefaultIsSignificantlySmaller(t *testing.T) {
+	// Build a fixture with 35 departures, all of which share the same
+	// stop_area/stop_point/line shapes.
+	type line struct {
+		ID                   int    `json:"id"`
+		Designation          string `json:"designation"`
+		TransportAuthorityID int    `json:"transport_authority_id"`
+		TransportMode        string `json:"transport_mode"`
+		GroupOfLines         string `json:"group_of_lines"`
+	}
+	type sa struct {
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+	type sp struct {
+		ID          int    `json:"id"`
+		Name        string `json:"name"`
+		Designation string `json:"designation"`
+	}
+	type journey struct {
+		ID              int    `json:"id"`
+		State           string `json:"state"`
+		PredictionState string `json:"prediction_state"`
+	}
+	type dep struct {
+		Destination   string  `json:"destination"`
+		DirectionCode int     `json:"direction_code"`
+		Direction     string  `json:"direction"`
+		State         string  `json:"state"`
+		Scheduled     string  `json:"scheduled"`
+		Expected      string  `json:"expected"`
+		Journey       journey `json:"journey"`
+		StopArea      sa      `json:"stop_area"`
+		StopPoint     sp      `json:"stop_point"`
+		Line          line    `json:"line"`
+		Deviations    []any   `json:"deviations"`
+	}
+	deps := make([]dep, 35)
+	for i := range deps {
+		deps[i] = dep{
+			Destination: "Västerhaninge", DirectionCode: 1, Direction: "Nynäshamn",
+			State: "ATSTOP", Scheduled: "2026-04-21T23:51:00", Expected: "2026-04-21T23:51:00",
+			Journey:    journey{ID: 2026042102879 + i, State: "NORMALPROGRESS", PredictionState: "NORMAL"},
+			StopArea:   sa{ID: 5310, Name: "Stockholm City", Type: "RAILWSTN"},
+			StopPoint:  sp{ID: 5313, Name: "Stockholm City", Designation: "4"},
+			Line:       line{ID: 43, Designation: "43", TransportAuthorityID: 1, TransportMode: "TRAIN", GroupOfLines: "Pendeltåg"},
+			Deviations: []any{},
+		}
+	}
+	body, _ := json.Marshal(map[string]any{"departures": deps, "stop_deviations": []any{}})
+
+	makeMock := func() *routedMock {
+		return &routedMock{routes: []mockRoute{
+			{pathContains: "/departures", body: string(body)},
+			{pathContains: "/v1/messages", body: "[]"},
+		}}
+	}
+
+	_, handler := DeparturesTool(makeMock())
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": float64(9192)}
+	slimResult, _ := handler(context.Background(), req)
+	slimSize := len(slimResult.Content[0].(mcp.TextContent).Text)
+
+	_, handler = DeparturesTool(makeMock())
+	req.Params.Arguments = map[string]any{"site_id": float64(9192), "verbose": true}
+	verboseResult, _ := handler(context.Background(), req)
+	verboseSize := len(verboseResult.Content[0].(mcp.TextContent).Text)
+
+	// 40% target from the P2 spec: slim should be at most 60% of verbose.
+	if slimSize >= verboseSize*6/10 {
+		t.Errorf("slim response (%d bytes) should be <60%% of verbose (%d bytes)", slimSize, verboseSize)
 	}
 }
 

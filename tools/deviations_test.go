@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -144,6 +145,100 @@ func TestFetchJSON_HTTPError(t *testing.T) {
 	text := result.Content[0].(mcp.TextContent).Text
 	if !strings.Contains(text, "404") {
 		t.Errorf("expected error to mention status code, got %q", text)
+	}
+}
+
+// P2: default (verbose=false) trims each deviation to the header/details/
+// publish/lines/stop_areas shape, dropping nested transport_authority and
+// href values.
+func TestDeviationsTool_DefaultResponseIsSlim(t *testing.T) {
+	body := `[{
+		"deviation_case_id": 777,
+		"version": 5,
+		"created": "2026-04-01T00:00:00Z",
+		"priority": {"importance_level": 7, "influence_level": 3, "urgency_level": 2},
+		"message_variants": [
+			{"header": "Avstängd hållplats", "details": "Slussen är avstängd", "language": "sv"},
+			{"header": "Stop closed", "details": "Slussen is closed", "language": "en"}
+		],
+		"publish": {"from": "2026-04-20T00:00:00+02:00", "upto": "2026-05-01T00:00:00+02:00"},
+		"scope": {
+			"lines": [
+				{"id": 1, "gid": 9011001001000000, "designation": "1", "transport_mode": "BUS", "href": "null/lines/1", "transport_authority": {"id": 1, "name": "SL"}}
+			],
+			"stop_areas": [
+				{"id": 9192, "name": "Slussen", "href": "null/stop-areas/9192"}
+			]
+		},
+		"categories": ["planned"]
+	}]`
+	mock := newMockDoer(body)
+	_, handler := DeviationsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out []map[string]any
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v\n%s", err, text)
+	}
+	if len(out) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(out))
+	}
+	entry := out[0]
+
+	// Kept fields
+	if entry["header"] != "Avstängd hållplats" {
+		t.Errorf("expected header, got %v", entry["header"])
+	}
+	if entry["details"] != "Slussen är avstängd" {
+		t.Errorf("expected details, got %v", entry["details"])
+	}
+	if entry["publish_from"] != "2026-04-20T00:00:00+02:00" {
+		t.Errorf("expected publish_from, got %v", entry["publish_from"])
+	}
+	if entry["publish_upto"] != "2026-05-01T00:00:00+02:00" {
+		t.Errorf("expected publish_upto, got %v", entry["publish_upto"])
+	}
+
+	// Dropped noise
+	for _, k := range []string{"version", "created", "priority", "message_variants", "scope", "publish"} {
+		if _, present := entry[k]; present {
+			t.Errorf("field %q should be dropped from slim response", k)
+		}
+	}
+
+	// href values should be gone entirely
+	if strings.Contains(text, "null/") {
+		t.Errorf("href null/... values should be stripped from slim response")
+	}
+	// transport_authority must not appear in the slim shape
+	if strings.Contains(text, "transport_authority") {
+		t.Errorf("transport_authority should not appear in slim response")
+	}
+}
+
+// P2: verbose=true preserves the full upstream payload, including fields
+// the slim form drops.
+func TestDeviationsTool_VerbosePreservesRaw(t *testing.T) {
+	body := loadTestData(t, "deviations.json")
+	mock := newMockDoer(body)
+	_, handler := DeviationsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"verbose": true}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	// Verbose should still carry the full message_variants / scope shape.
+	for _, expected := range []string{"message_variants", "scope", "transport_mode"} {
+		if !strings.Contains(text, expected) {
+			t.Errorf("verbose response should contain %q", expected)
+		}
 	}
 }
 
