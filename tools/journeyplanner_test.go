@@ -67,6 +67,154 @@ func TestStopFinderTool(t *testing.T) {
 	}
 }
 
+func TestStopFinderTool_ReturnsFlatTrimmedArray(t *testing.T) {
+	body := loadTestData(t, "stop_finder.json")
+	mock := newMockDoer(body)
+
+	_, handler := StopFinderTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"name": "Slussen"}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	// Wrapper fields must be gone from the trimmed output.
+	for _, k := range []string{"locations", "systemMessages"} {
+		if strings.Contains(text, `"`+k+`"`) {
+			t.Errorf("wrapper key %q should be trimmed, got %s", k, text)
+		}
+	}
+
+	// Output is now a flat array, mirroring sites.
+	var entries []map[string]any
+	if err := json.Unmarshal([]byte(text), &entries); err != nil {
+		t.Fatalf("expected flat array, got: %v\n%s", err, text)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("expected 3 entries from fixture, got %d", len(entries))
+	}
+
+	// Per-entry: only the six agreed fields survive.
+	allowed := map[string]bool{"id": true, "name": true, "lat": true, "lon": true, "match_quality": true, "type": true}
+	for _, e := range entries {
+		for k := range e {
+			if !allowed[k] {
+				t.Errorf("unexpected field %q survived trim: %v", k, e)
+			}
+		}
+	}
+
+	// Noisy fields the user asked to drop must be absent.
+	for _, k := range []string{"disassembledName", "isBest", "isGlobalId", "parent", "productClasses", "properties", "coord"} {
+		if strings.Contains(text, `"`+k+`"`) {
+			t.Errorf("field %q should be stripped, got %s", k, text)
+		}
+	}
+}
+
+func TestStopFinderTool_ExtractsLatLonFromCoord(t *testing.T) {
+	body := loadTestData(t, "stop_finder.json")
+	mock := newMockDoer(body)
+
+	_, handler := StopFinderTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"name": "Slussen"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var entries []struct {
+		ID  string  `json:"id"`
+		Lat float64 `json:"lat"`
+		Lon float64 `json:"lon"`
+	}
+	if err := json.Unmarshal([]byte(text), &entries); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	// Slussen fixture: coord [59.320316, 18.072451] → lat=59.320316, lon=18.072451.
+	var found bool
+	for _, e := range entries {
+		if e.ID == "9091001000009192" {
+			found = true
+			if e.Lat != 59.320316 || e.Lon != 18.072451 {
+				t.Errorf("expected Slussen lat=59.320316 lon=18.072451, got lat=%v lon=%v", e.Lat, e.Lon)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("Slussen entry missing")
+	}
+}
+
+func TestStopFinderTool_PreservesGIDAndType(t *testing.T) {
+	// id stays as the 16-digit GID string (departures accepts it via its
+	// site_id normalizer), and non-stop entries (type="poi") aren't dropped.
+	body := loadTestData(t, "stop_finder.json")
+	mock := newMockDoer(body)
+
+	_, handler := StopFinderTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"name": "Slussen"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var entries []struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal([]byte(text), &entries)
+
+	var gotGID, gotPOI bool
+	for _, e := range entries {
+		if e.ID == "9091001000009192" && e.Type == "stop" {
+			gotGID = true
+		}
+		if e.Type == "poi" {
+			gotPOI = true
+		}
+	}
+	if !gotGID {
+		t.Error("expected Slussen entry with 16-digit GID preserved and type=stop")
+	}
+	if !gotPOI {
+		t.Error("expected POI entry kept (non-stop results shouldn't be filtered)")
+	}
+}
+
+func TestStopFinderTool_OrdersByMatchQuality(t *testing.T) {
+	// Upstream hands results in descending match_quality already; verify
+	// the trim preserves that order (fixture: 1000, 850, 700).
+	body := loadTestData(t, "stop_finder.json")
+	mock := newMockDoer(body)
+
+	_, handler := StopFinderTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"name": "Slussen"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var entries []struct {
+		MatchQuality int `json:"match_quality"`
+	}
+	_ = json.Unmarshal([]byte(text), &entries)
+
+	for i := 1; i < len(entries); i++ {
+		if entries[i].MatchQuality > entries[i-1].MatchQuality {
+			t.Errorf("match_quality order broken at index %d: %d > %d",
+				i, entries[i].MatchQuality, entries[i-1].MatchQuality)
+		}
+	}
+}
+
 func TestStopFinderTool_MissingName(t *testing.T) {
 	mock := newMockDoer("{}")
 

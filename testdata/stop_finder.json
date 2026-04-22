@@ -1,1 +1,44 @@
-{"locations": [{"id": "A=1@O=Slussen@X=18071860@Y=59318600", "name": "Slussen (Stockholm)", "type": "stop"}]}
+{
+  "locations": [
+    {
+      "coord": [59.320316, 18.072451],
+      "disassembledName": "Slussen",
+      "id": "9091001000009192",
+      "isBest": true,
+      "isGlobalId": true,
+      "matchQuality": 1000,
+      "name": "Stockholm, Slussen",
+      "parent": {"id": "placeID:33001080:1", "name": "Stockholm", "type": "locality"},
+      "productClasses": [2, 5, 9],
+      "properties": {"mainLocality": "Stockholm", "stopId": "18009192"},
+      "type": "stop"
+    },
+    {
+      "coord": [59.318700, 18.072700],
+      "disassembledName": "Slussplan",
+      "id": "9091001000009193",
+      "isBest": false,
+      "isGlobalId": true,
+      "matchQuality": 850,
+      "name": "Stockholm, Slussplan",
+      "parent": {"id": "placeID:33001080:1", "name": "Stockholm", "type": "locality"},
+      "productClasses": [5],
+      "properties": {"mainLocality": "Stockholm", "stopId": "18009193"},
+      "type": "stop"
+    },
+    {
+      "coord": [59.319000, 18.072000],
+      "disassembledName": "Slussen T-bana",
+      "id": "poi:12345",
+      "isBest": false,
+      "isGlobalId": false,
+      "matchQuality": 700,
+      "name": "Slussen T-bana (POI)",
+      "parent": {"id": "placeID:33001080:1", "name": "Stockholm", "type": "locality"},
+      "productClasses": [],
+      "properties": {},
+      "type": "poi"
+    }
+  ],
+  "systemMessages": []
+}
