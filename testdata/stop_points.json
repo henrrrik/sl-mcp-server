@@ -1,1 +1,8 @@
-[{"id": 10001, "name": "Slussen", "designation": "A", "type": "BUSTERM"}]
+[
+  {"id": 10001, "name": "Slussen", "designation": "A", "type": "BUSTERM"},
+  {"id": 10002, "name": "Slussen", "designation": "B", "type": "BUSTERM"},
+  {"id": 10003, "name": "Slussplan", "designation": "A", "type": "BUSTERM"},
+  {"id": 10010, "name": "T-Centralen", "designation": "1", "type": "METROSTN"},
+  {"id": 10011, "name": "T-Centralen", "designation": "2", "type": "METROSTN"},
+  {"id": 10020, "name": "Vällingby", "designation": "A", "type": "METROSTN"}
+]

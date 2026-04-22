@@ -84,7 +84,7 @@ func SitesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 		if errResult != nil {
 			return errResult, nil
 		}
-		filtered, err := filterSites(body, query, limit)
+		filtered, err := filterByName(body, query, limit)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to filter sites: %v", err)), nil
 		}
@@ -149,12 +149,30 @@ func LinesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 
 func StopPointsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("stop_points",
-		mcp.WithDescription("List SL stop points (platforms, quays)"),
+		mcp.WithDescription("Enumerate SL's catalog of stop points (individual platforms, quays, and stands within a site) and their canonical numeric ids. Matching is exact substring only. The full list is large; combine query and limit to narrow the result."),
+		mcp.WithString("query", mcp.Description("Case-insensitive substring match on stop point name. Exact substrings only — no fuzzy matching.")),
+		mcp.WithNumber("limit", mcp.Description("Maximum number of stop points to return. Omitted or 0 means no limit.")),
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		query := request.GetString("query", "")
+		limit := request.GetInt("limit", 0)
+
 		u := slclient.BuildURL(transportBase, "/v1/stop-points", nil)
-		return fetchJSON(ctx, client, u)
+
+		if query == "" && limit <= 0 {
+			return fetchJSON(ctx, client, u)
+		}
+
+		body, errResult := fetchJSONRaw(ctx, client, u)
+		if errResult != nil {
+			return errResult, nil
+		}
+		filtered, err := filterByName(body, query, limit)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to filter stop points: %v", err)), nil
+		}
+		return mcp.NewToolResultText(string(filtered)), nil
 	}
 
 	return tool, handler
