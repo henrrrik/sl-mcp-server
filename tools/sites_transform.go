@@ -5,11 +5,13 @@ import (
 	"strings"
 )
 
-// filterSites returns a JSON-encoded slice of the upstream /v1/sites entries
-// matching the given name query (case-insensitive substring) and trimmed to
-// at most `limit` entries. An empty query means "no name filter"; limit <= 0
-// means "no truncation". Unknown fields in each entry are preserved verbatim.
-func filterSites(raw []byte, query string, limit int) ([]byte, error) {
+// filterByName returns a JSON-encoded slice of the upstream entries whose
+// "name" field matches the given query (case-insensitive substring), trimmed
+// to at most `limit` entries. An empty query means "no name filter"; limit
+// <= 0 means "no truncation". Unknown fields in each entry are preserved
+// verbatim. Used by both sites and stop_points, which share the same
+// {id, name, ...} envelope shape.
+func filterByName(raw []byte, query string, limit int) ([]byte, error) {
 	var entries []json.RawMessage
 	if err := json.Unmarshal(raw, &entries); err != nil {
 		return nil, err

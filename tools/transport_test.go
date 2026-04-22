@@ -566,6 +566,87 @@ func TestStopPointsTool(t *testing.T) {
 	}
 }
 
+func TestStopPointsTool_QueryFiltersByNameSubstring(t *testing.T) {
+	body := loadTestData(t, "stop_points.json")
+	mock := newMockDoer(body)
+
+	_, handler := StopPointsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": "sluss"}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var points []map[string]any
+	if err := json.Unmarshal([]byte(text), &points); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Fixture: two "Slussen" platforms (A, B) + one "Slussplan" all match "sluss".
+	if len(points) != 3 {
+		t.Errorf("expected 3 matching stop points, got %d: %v", len(points), points)
+	}
+	names := map[string]int{}
+	for _, p := range points {
+		names[p["name"].(string)]++
+	}
+	if names["Slussen"] != 2 || names["Slussplan"] != 1 {
+		t.Errorf("expected 2 Slussen + 1 Slussplan, got %v", names)
+	}
+}
+
+func TestStopPointsTool_LimitTruncates(t *testing.T) {
+	body := loadTestData(t, "stop_points.json")
+	mock := newMockDoer(body)
+
+	_, handler := StopPointsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"limit": float64(2)}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var points []map[string]any
+	if err := json.Unmarshal([]byte(text), &points); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if len(points) != 2 {
+		t.Errorf("expected 2 stop points after limit=2, got %d", len(points))
+	}
+}
+
+func TestStopPointsTool_QueryAndLimit(t *testing.T) {
+	body := loadTestData(t, "stop_points.json")
+	mock := newMockDoer(body)
+
+	_, handler := StopPointsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": "sluss", "limit": float64(1)}
+
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var points []map[string]any
+	if err := json.Unmarshal([]byte(text), &points); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+	if len(points) != 1 {
+		t.Errorf("expected 1 stop point after query=sluss + limit=1, got %d", len(points))
+	}
+}
+
 func TestTransportAuthoritiesTool(t *testing.T) {
 	body := loadTestData(t, "transport_authorities.json")
 	mock := newMockDoer(body)
