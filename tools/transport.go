@@ -98,12 +98,12 @@ func SitesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 
 func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("departures",
-		mcp.WithDescription("Get real-time departures from an SL transit site. Accepts the short-form site_id from SL:sites, the 8-digit 18xx form from SL:stop_finder.properties.stopId, or the 16-digit GID from SL:stop_finder.id — all are normalized to the short form before the upstream call. For busy terminals, narrow the result with transport_mode / line / direction_code / limit. By default, per-row stop_area / journey internals are dropped (every row belongs to the queried site) and line is slimmed to designation/transport_mode/group_of_lines; set verbose=true for the full upstream shape. stop_deviations are rebuilt from /v1/messages, filtered to scopes that touch this site — with a fallback to the upstream's raw list if /v1/messages is unreachable."),
+		mcp.WithDescription("Get real-time departures from an SL transit site. Accepts the short-form site_id from SL:sites, the 8-digit 18xx form from SL:stop_finder.properties.stopId, or the 16-digit GID from SL:stop_finder.id — all are normalized to the short form before the upstream call. Default limit is 20 departures; narrow further with transport_mode / line / direction_code or raise with limit=0 (unlimited). By default, per-row stop_area / journey internals are dropped (every row belongs to the queried site) and line is slimmed to designation/transport_mode/group_of_lines; set verbose=true for the full upstream shape. stop_deviations are rebuilt from /v1/messages, filtered to scopes that touch this site — with a fallback to the upstream's raw list if /v1/messages is unreachable."),
 		mcp.WithString("site_id", mcp.Required(), mcp.Description("Site ID. Accepts the short form from SL:sites (e.g. \"9702\"), the 8-digit form from stop_finder.properties.stopId (e.g. \"18009702\"), or the 16-digit GID from stop_finder.id (e.g. \"9091001000009702\"). All are normalized to the short form before the upstream call. Pass as a string — 16-digit GIDs exceed JS Number.MAX_SAFE_INTEGER and lose precision if typed as a number.")),
 		mcp.WithString("transport_mode", mcp.Description("Filter departures by line mode: BUS, METRO, TRAIN, TRAM, SHIP, FERRY, TAXI. Case-insensitive.")),
-		mcp.WithString("line", mcp.Description("Filter departures by line designation (exact match on the line's designation field, case-insensitive). Example: \"43\" returns only pendeltåg 43.")),
+		mcp.WithString("line", mcp.Description("Filter departures by line designation (prefix match, case-insensitive). Example: \"43\" matches pendeltåg 43 and 43X; \"54\" matches the 54x bus family (54, 540, 541, …).")),
 		mcp.WithNumber("direction_code", mcp.Description("Filter departures by direction code (SL's upstream field; typically 1 or 2). Use to show only departures heading one way.")),
-		mcp.WithNumber("limit", mcp.Description("Maximum number of departures to return after filtering. Omitted or 0 means no truncation (keeps the upstream's default page size).")),
+		mcp.WithNumber("limit", mcp.Description("Maximum number of departures to return after filtering. Default 20. Pass 0 for unlimited (keeps the upstream's default page size, typically 35).")),
 		mcp.WithBoolean("verbose", mcp.Description("Preserve per-departure stop_area / journey / full line object. Default false (slim: stop_area and journey dropped, line reduced to designation/transport_mode/group_of_lines).")),
 	)
 
@@ -125,11 +125,19 @@ func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 			return mcp.NewToolResultError(err.Error()), nil
 		}
 
+		// Default limit caps a busy-terminal response at a readable page
+		// size. Callers who need the full upstream set pass limit=0.
+		limit := defaultDeparturesLimit
+		if raw, present := request.GetArguments()["limit"]; present {
+			if n, ok := raw.(float64); ok {
+				limit = int(n)
+			}
+		}
 		filters := departuresFilters{
 			transportMode: request.GetString("transport_mode", ""),
 			line:          request.GetString("line", ""),
 			directionCode: request.GetInt("direction_code", 0),
-			limit:         request.GetInt("limit", 0),
+			limit:         limit,
 		}
 
 		params := url.Values{}
@@ -201,6 +209,11 @@ func LinesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 // reasonably read. Callers asking for the full ~600-entry catalog must
 // opt in with limit=0 (unlimited).
 const defaultLinesLimit = 50
+
+// defaultDeparturesLimit caps the no-arg response to a single "page" of
+// upcoming departures. SL's upstream typically returns 35; 20 is enough
+// for "when's my next X" queries without flooding the context.
+const defaultDeparturesLimit = 20
 
 func StopPointsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("stop_points",

@@ -637,6 +637,151 @@ func TestDeparturesTool_Limit(t *testing.T) {
 	}
 }
 
+// Round 2, Section 5: no-arg departures caps at 20 by default (was
+// unlimited in the previous release). Callers needing the full upstream
+// set opt in with limit=0.
+func TestDeparturesTool_DefaultLimitIs20(t *testing.T) {
+	// 30 identical departures so truncation is visible.
+	deps := []any{}
+	for i := 0; i < 30; i++ {
+		deps = append(deps, map[string]any{
+			"destination":    "X",
+			"direction_code": float64(1),
+			"stop_area":      map[string]any{"id": 5310},
+			"line":           map[string]any{"id": 43, "designation": "43", "transport_mode": "TRAIN"},
+		})
+	}
+	b, _ := json.Marshal(map[string]any{"departures": deps, "stop_deviations": []any{}})
+
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/departures", body: string(b)},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
+
+	_, handler := DeparturesTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": float64(9192)}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Departures []any `json:"departures"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if len(out.Departures) != 20 {
+		t.Errorf("expected default limit 20, got %d", len(out.Departures))
+	}
+}
+
+// Round 2, Section 5: limit=0 explicitly means unlimited.
+func TestDeparturesTool_LimitZeroIsUnlimited(t *testing.T) {
+	deps := []any{}
+	for i := 0; i < 30; i++ {
+		deps = append(deps, map[string]any{
+			"destination":    "X",
+			"direction_code": float64(1),
+			"stop_area":      map[string]any{"id": 5310},
+			"line":           map[string]any{"id": 43, "designation": "43", "transport_mode": "TRAIN"},
+		})
+	}
+	b, _ := json.Marshal(map[string]any{"departures": deps, "stop_deviations": []any{}})
+
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/departures", body: string(b)},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
+
+	_, handler := DeparturesTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": float64(9192), "limit": float64(0)}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Departures []any `json:"departures"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if len(out.Departures) != 30 {
+		t.Errorf("expected limit=0 to mean unlimited (30), got %d", len(out.Departures))
+	}
+}
+
+// Round 2, Section 5: line is now a prefix match. "43" matches 43 and 43X.
+func TestDeparturesTool_LinePrefixMatch(t *testing.T) {
+	body := `{
+		"departures": [
+			{"destination":"A","direction_code":1,"stop_area":{"id":5310},"line":{"id":43,"designation":"43","transport_mode":"TRAIN"}},
+			{"destination":"B","direction_code":1,"stop_area":{"id":5310},"line":{"id":430,"designation":"43X","transport_mode":"TRAIN"}},
+			{"destination":"C","direction_code":1,"stop_area":{"id":5310},"line":{"id":4,"designation":"4","transport_mode":"BUS"}}
+		],
+		"stop_deviations": []
+	}`
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/departures", body: body},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
+
+	_, handler := DeparturesTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": float64(9192), "line": "43"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Departures []struct {
+			Line struct {
+				Designation string `json:"designation"`
+			} `json:"line"`
+		} `json:"departures"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	// "43" should prefix-match 43 and 43X, but NOT "4" (that would be a
+	// substring match, which is different — prefix of "4" would include
+	// 43, 43X, and 4 itself; prefix of "43" excludes "4").
+	if len(out.Departures) != 2 {
+		t.Fatalf("expected 2 prefix matches for '43' (43 and 43X), got %d: %+v", len(out.Departures), out.Departures)
+	}
+	for _, d := range out.Departures {
+		if !strings.HasPrefix(d.Line.Designation, "43") {
+			t.Errorf("result %+v doesn't have prefix 43", d)
+		}
+	}
+}
+
+// Round 2, Section 5: prefix "4" would match 43, 43X, AND the bus "4" —
+// confirms that prefix semantics differ from the old exact-match behavior.
+func TestDeparturesTool_LinePrefixSingleChar(t *testing.T) {
+	body := `{
+		"departures": [
+			{"destination":"A","direction_code":1,"stop_area":{"id":5310},"line":{"id":43,"designation":"43","transport_mode":"TRAIN"}},
+			{"destination":"B","direction_code":1,"stop_area":{"id":5310},"line":{"id":4,"designation":"4","transport_mode":"BUS"}}
+		],
+		"stop_deviations": []
+	}`
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/departures", body: body},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
+
+	_, handler := DeparturesTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": float64(9192), "line": "4"}
+
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Departures []any `json:"departures"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if len(out.Departures) != 2 {
+		t.Errorf("expected prefix '4' to match both 43 and 4, got %d", len(out.Departures))
+	}
+}
+
 // P2: filters compose. line + transport_mode + limit should narrow to
 // exactly the first matching row.
 func TestDeparturesTool_FiltersCompose(t *testing.T) {
