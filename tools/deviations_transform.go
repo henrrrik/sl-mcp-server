@@ -170,9 +170,10 @@ func slimDeviationEntry(raw json.RawMessage) (slimDeviation, bool) {
 	return out, true
 }
 
-// flattenCategories handles both shapes SL has emitted for categories over
-// time: a plain []string and a structured [{group, name}]. Structured form
-// is flattened to "GROUP:NAME" (or just "GROUP" when name is absent).
+// flattenCategories handles every shape SL has emitted for categories over
+// time: a plain []string, a structured [{group, name}] (historical) and a
+// structured [{group, type}] (live today). Structured form is flattened to
+// "GROUP:NAME" (or just "GROUP" when neither type nor name is present).
 // Returns nil for unknown/missing shapes so the slim response can omit the
 // field with omitempty.
 func flattenCategories(raw json.RawMessage) []string {
@@ -193,18 +194,28 @@ func flattenCategories(raw json.RawMessage) []string {
 		}
 		return out
 	}
-	// Structured form.
+	return flattenStructuredCategories(raw)
+}
+
+// flattenStructuredCategories decodes the object form. Live /v1/messages
+// sends {group, type}; older payloads used {group, name}. Both are read and
+// type wins when present.
+func flattenStructuredCategories(raw json.RawMessage) []string {
 	var asObjects []struct {
 		Group string `json:"group"`
 		Name  string `json:"name"`
+		Type  string `json:"type"`
 	}
 	if err := json.Unmarshal(raw, &asObjects); err != nil {
 		return nil
 	}
 	out := make([]string, 0, len(asObjects))
 	for _, c := range asObjects {
-		label := flattenCategoryLabel(c.Group, c.Name)
-		if label != "" {
+		kind := c.Type
+		if kind == "" {
+			kind = c.Name
+		}
+		if label := flattenCategoryLabel(c.Group, kind); label != "" {
 			out = append(out, label)
 		}
 	}
