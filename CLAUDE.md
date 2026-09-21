@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-SL MCP Server is an MCP (Model Context Protocol) server proxy for SL (Stockholms Lokaltrafik) public transport APIs. It exposes 9 tools over SSE transport, proxying three SL REST APIs: Deviations, Journey Planner v2, and Transport.
+Storstockholms Lokaltrafik (SL) MCP Server is an MCP (Model Context Protocol) server proxy for SL public transport APIs. It exposes 11 tools over SSE transport, proxying three SL REST APIs: Deviations, Journey Planner v2, and Transport.
 
 Hosted on Runway at https://sl-mcp-server.pqapp.dev
 
