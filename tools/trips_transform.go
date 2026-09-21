@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"strings"
 	"time"
 
@@ -622,15 +621,11 @@ func injectVerboseExtras(body []byte, warnings []tripWarning) ([]byte, error) {
 }
 
 // resolveCandidates fetches /v2/stop-finder for the given query and returns
-// up to maxCandidates of the most-relevant matches. Upstream orders results
-// by matchQuality, so we take the first N.
+// every match ranked by matchQuality with an exact-name tie-break. Callers
+// cap the list when they emit it (capCandidates) so that ranking — not
+// upstream's arbitrary order — decides which candidates a user sees.
 func resolveCandidates(ctx context.Context, client slclient.HTTPDoer, query string) ([]locationCandidate, error) {
-	params := url.Values{
-		"name_sf":           {query},
-		"type_sf":           {"any"},
-		"any_obj_filter_sf": {"2"},
-	}
-	u := slclient.BuildURL(journeyPlannerBase, "/v2/stop-finder", params)
+	u := slclient.BuildURL(journeyPlannerBase, "/v2/stop-finder", stopFinderParams(query))
 	body, errResult := fetchJSONRaw(ctx, client, u)
 	if errResult != nil {
 		return nil, fmt.Errorf("stop-finder failed: %s", errResultText(errResult))
@@ -653,76 +648,69 @@ func resolveCandidates(ctx context.Context, client slclient.HTTPDoer, query stri
 		return nil, fmt.Errorf("stop-finder decode: %w", err)
 	}
 
-	n := len(sf.Locations)
-	if n > maxCandidates {
-		n = maxCandidates
-	}
-	out := make([]locationCandidate, n)
-	for i := 0; i < n; i++ {
-		loc := sf.Locations[i]
+	out := make([]locationCandidate, 0, len(sf.Locations))
+	for _, loc := range sf.Locations {
 		name := loc.DisassembledName
 		if name == "" {
 			name = loc.Name
 		}
-		out[i] = locationCandidate{
+		out = append(out, locationCandidate{
 			Name:         name,
 			Locality:     loc.Parent.Name,
 			ID:           loc.ID,
 			Type:         loc.Type,
 			Coord:        loc.Coord,
 			MatchQuality: loc.MatchQuality,
-		}
+		})
 	}
+	rankCandidates(out, query)
 	return out, nil
+}
+
+// capCandidates bounds a candidate list to maxCandidates for outward
+// payloads (pickers, not-a-stop hints, shadowed warnings).
+func capCandidates(c []locationCandidate) []locationCandidate {
+	if len(c) > maxCandidates {
+		return c[:maxCandidates]
+	}
+	return c
 }
 
 // Exact-match short-circuit thresholds. Upstream tags an exact stop-name
 // hit as matchQuality 1000; shadowing candidates typically score 700–900.
-// We require at least a 100-point gap between the exact match and the
-// next-best candidate before auto-picking, so "Slussen" wins over the
-// 850-quality "Slussplan" but a pair tied at 1000 still errors as
-// ambiguous (which shouldn't happen in practice — upstream would have
-// returned journeys for the first).
+// A top candidate wins outright with a 100-point gap over the runner-up.
+// Live data also produces ties and narrow gaps for the busiest stations
+// ("Slussen" and "Slussen (ersättningstrafik)" both at 1000; "Alvik" 1000
+// vs 980), so a candidate whose name is the query itself also wins when
+// the runner-up's isn't.
 const (
 	exactMatchQualityMin = 1000
 	exactMatchQualityGap = 100
 )
 
 // pickExactMatch returns the single candidate that qualifies as an exact
-// name match (match_quality >= exactMatchQualityMin and strictly higher
-// than every other candidate by at least exactMatchQualityGap). Returns
-// (nil, _, false) when no candidate qualifies.
+// name match: the top-ranked candidate scores >= exactMatchQualityMin and
+// either beats the runner-up by exactMatchQualityGap or is the only one of
+// the two whose name is the query. Returns (nil, _, false) when no
+// candidate qualifies — including a tie where both names match.
 //
 // The second return value is the remaining candidates — what would have
 // been offered as an ambiguity picker — so callers can attach them as a
 // "shadowed" warning on the successful response.
-func pickExactMatch(cands []locationCandidate) (*locationCandidate, []locationCandidate, bool) {
+func pickExactMatch(cands []locationCandidate, query string) (*locationCandidate, []locationCandidate, bool) {
 	if len(cands) < 2 {
 		return nil, nil, false
 	}
-	var bestIdx = -1
-	var bestQ, secondQ int
-	for i, c := range cands {
-		if c.MatchQuality > bestQ {
-			secondQ = bestQ
-			bestQ = c.MatchQuality
-			bestIdx = i
-			continue
-		}
-		if c.MatchQuality > secondQ {
-			secondQ = c.MatchQuality
-		}
-	}
-	if bestIdx < 0 || bestQ < exactMatchQualityMin || bestQ-secondQ < exactMatchQualityGap {
+	ranked := append([]locationCandidate(nil), cands...)
+	rankCandidates(ranked, query)
+	best, second := ranked[0], ranked[1]
+	if best.MatchQuality < exactMatchQualityMin {
 		return nil, nil, false
 	}
-	winner := cands[bestIdx]
-	shadowed := make([]locationCandidate, 0, len(cands)-1)
-	for i, c := range cands {
-		if i == bestIdx {
-			continue
-		}
-		shadowed = append(shadowed, c)
+	clearGap := best.MatchQuality-second.MatchQuality >= exactMatchQualityGap
+	exactName := nameMatchesQuery(best.Name, query) && !nameMatchesQuery(second.Name, query)
+	if !clearGap && !exactName {
+		return nil, nil, false
 	}
-	return &winner, shadowed, true
+	return &best, capCandidates(ranked[1:]), true
 }

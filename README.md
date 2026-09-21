@@ -89,7 +89,7 @@ Leg modes: `bus`, `train`, `metro`, `tram`, `ship`, `walk`. Transit legs carry `
 
 **Ambiguity and drift handling.** Several guards keep the tool from silently planning the wrong trip:
 
-- **Exact-match short-circuit.** If `stop_finder` returns one candidate with `match_quality ≥ 1000` and the next-best is ≥ 100 points lower, the exact match is used automatically. Shadowed candidates are attached as a warning:
+- **Exact-match short-circuit.** Stop-finder candidates are ranked server-side by `match_quality` (upstream doesn't guarantee order). If the top candidate scores `≥ 1000` and either beats the runner-up by ≥ 100 points or is the only one of the two whose name is the query itself (case- and diacritic-insensitive — so "Slussen" beats "Slussen (ersättningstrafik)" at a 1000/1000 tie), it is used automatically. Shadowed candidates are attached as a warning:
 
   ```json
   { "warnings": [{
@@ -184,7 +184,7 @@ Turn a free-text location query into a canonical SL site. The "I want an id" pri
 }
 ```
 
-`best.unambiguous` is `true` when `match_quality ≥ 1000` AND no other stop candidate is within 50 points. Callers can skip the disambiguation round-trip on clear winners. `candidates` is capped at 4 runners-up.
+`best.unambiguous` is `true` when `match_quality ≥ 1000` AND either no other stop candidate is within 50 points or `best` is the only stop named exactly as the query. Ambiguity is judged against every stop candidate before `candidates` is capped at 4 runners-up, so a tied stop can't hide behind the cap. Callers can skip the disambiguation round-trip on clear winners.
 
 POI-only queries return `best: null` even with `stop_only=false` — the POI shows up in `candidates` so the caller can recover, but `best` is reserved for transit stops.
 
@@ -216,7 +216,7 @@ Distance is haversine, rounded to the nearest metre. `transport_mode` filtering 
 
 ### `stop_finder`
 
-Fuzzy, ranked search for stops, stations, and addresses. Tolerates typos and partial names; returns candidates ordered by `match_quality`. Non-stop entries (type != "stop") are kept so addresses and POIs can still resolve.
+Fuzzy, ranked search for stops, stations, addresses and POIs. Tolerates typos and partial names; returns candidates sorted by `match_quality` (server-side — upstream doesn't guarantee order). Non-stop entries (type != "stop") are kept so addresses and POIs can still resolve.
 
 | Param | Type | Notes |
 |---|---|---|

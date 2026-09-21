@@ -52,18 +52,13 @@ func ResolveTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 			}
 		}
 
-		params := url.Values{
-			"name_sf":           {query},
-			"type_sf":           {"any"},
-			"any_obj_filter_sf": {"2"},
-		}
-		u := slclient.BuildURL(journeyPlannerBase, "/v2/stop-finder", params)
+		u := slclient.BuildURL(journeyPlannerBase, "/v2/stop-finder", stopFinderParams(query))
 		body, errResult := fetchJSONRaw(ctx, client, u)
 		if errResult != nil {
 			return errResult, nil
 		}
 
-		out, err := buildResolveResponse(body, stopOnly)
+		out, err := buildResolveResponse(body, query, stopOnly)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to reshape resolve response: %v", err)), nil
 		}
@@ -71,6 +66,19 @@ func ResolveTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	}
 
 	return tool, handler
+}
+
+// stopFinderParams builds the /v2/stop-finder query. any_obj_filter_sf=0
+// asks for every object type — stops, POIs, addresses, localities. The
+// stops-only value (2) would make every POI/address code path unreachable:
+// resolve's stop_only=false, stop_finder's address results, and the
+// *_not_a_stop candidate branch in trips.
+func stopFinderParams(query string) url.Values {
+	return url.Values{
+		"name_sf":           {query},
+		"type_sf":           {"any"},
+		"any_obj_filter_sf": {"0"},
+	}
 }
 
 func StopFinderTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
@@ -85,18 +93,12 @@ func StopFinderTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 			return mcp.NewToolResultError("name is required"), nil
 		}
 
-		params := url.Values{
-			"name_sf":           {name},
-			"type_sf":           {"any"},
-			"any_obj_filter_sf": {"2"},
-		}
-
-		u := slclient.BuildURL(journeyPlannerBase, "/v2/stop-finder", params)
+		u := slclient.BuildURL(journeyPlannerBase, "/v2/stop-finder", stopFinderParams(name))
 		body, errResult := fetchJSONRaw(ctx, client, u)
 		if errResult != nil {
 			return errResult, nil
 		}
-		trimmed, err := trimStopFinder(body)
+		trimmed, err := trimStopFinder(body, name)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to reshape stop_finder response: %v", err)), nil
 		}
@@ -428,7 +430,7 @@ func resolveSide(side, query string, ambiguous bool, stops []locationCandidate) 
 	if len(stops) == 1 {
 		return &stops[0], nil, true
 	}
-	if picked, shadowed, ok := pickExactMatch(stops); ok {
+	if picked, shadowed, ok := pickExactMatch(stops, query); ok {
 		return picked, &tripWarning{
 			Code:     "exact_match_shadowed",
 			Side:     side,
@@ -470,7 +472,7 @@ func buildNotAStopResult(code, query string, cands []locationCandidate) *mcp.Cal
 	body, err := json.Marshal(notAStopResponse{
 		Error:      code,
 		Query:      query,
-		Candidates: cands,
+		Candidates: capCandidates(cands),
 		Hint:       "Resolved to a non-stop (POI/address/locality). Ask the user to pick a nearby transit stop, or use the resolve / stop_finder tool.",
 	})
 	if err != nil {
@@ -582,6 +584,7 @@ func fetchCandidatesInParallel(ctx context.Context, client slclient.HTTPDoer, or
 // / ambiguous_both structured error based on which side(s) the caller still has
 // to disambiguate. Any side that's already been silently resolved is omitted.
 func buildAmbiguityErrorResult(origin, destination string, originNeedsPicker, destNeedsPicker bool, oc, dc []locationCandidate) *mcp.CallToolResult {
+	oc, dc = capCandidates(oc), capCandidates(dc)
 	var body []byte
 	var err error
 	switch {

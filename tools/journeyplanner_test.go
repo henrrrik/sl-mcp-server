@@ -57,8 +57,10 @@ func TestStopFinderTool(t *testing.T) {
 	if q.Get("type_sf") != "any" {
 		t.Errorf("expected type_sf=any, got %q", q.Get("type_sf"))
 	}
-	if q.Get("any_obj_filter_sf") != "2" {
-		t.Errorf("expected any_obj_filter_sf=2, got %q", q.Get("any_obj_filter_sf"))
+	// 2 would restrict upstream to stops only, making every POI/address
+	// path (resolve stop_only=false, *_not_a_stop) dead code.
+	if q.Get("any_obj_filter_sf") != "0" {
+		t.Errorf("expected any_obj_filter_sf=0 (all object types), got %q", q.Get("any_obj_filter_sf"))
 	}
 
 	text := result.Content[0].(mcp.TextContent).Text
@@ -363,7 +365,8 @@ func TestResolveTool_UnambiguousClearWinner(t *testing.T) {
 }
 
 // Round 2, Section 4: unambiguous=false when two stops are within 50
-// points of each other — the caller still needs to pick.
+// points of each other and neither is the literal query — the caller
+// still needs to pick.
 func TestResolveTool_UnambiguousFalseForNearTie(t *testing.T) {
 	body := `{"locations":[
 		{"coord":[59.4,17.8],"disassembledName":"Jakobsberg","id":"9091001000009702","matchQuality":1000,"name":"Jakobsberg","parent":{"name":"Järfälla"},"properties":{"stopId":"18009702"},"type":"stop"},
@@ -373,7 +376,9 @@ func TestResolveTool_UnambiguousFalseForNearTie(t *testing.T) {
 
 	_, handler := ResolveTool(mock)
 	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{"query": "Jakobsberg"}
+	// "Jakobsb" is not the exact name of either stop, so only the delta rule
+	// applies and it fails.
+	req.Params.Arguments = map[string]any{"query": "Jakobsb"}
 
 	result, _ := handler(context.Background(), req)
 	text := result.Content[0].(mcp.TextContent).Text
@@ -388,7 +393,7 @@ func TestResolveTool_UnambiguousFalseForNearTie(t *testing.T) {
 		t.Fatal("expected best populated")
 	}
 	if out.Best.Unambiguous {
-		t.Errorf("expected unambiguous=false (1000 vs 970, delta=30 < 50)")
+		t.Errorf("expected unambiguous=false (1000 vs 970, delta=30 < 50, no exact name)")
 	}
 }
 
@@ -1135,7 +1140,8 @@ func TestTripsTool_SingleCandidateAutoResolvesBoth(t *testing.T) {
 }
 
 func TestTripsTool_OriginMultiDestSingleOnlyOriginError(t *testing.T) {
-	// Origin has multiple candidates, destination has exactly one.
+	// Origin has multiple candidates (none named exactly as the query, so
+	// the exact-name tie-break can't pick one), destination has exactly one.
 	// Response should be ambiguous_origin alone — NOT ambiguous_both.
 	tripsErr := `{"systemMessages":[
 		{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"},
@@ -1145,7 +1151,7 @@ func TestTripsTool_OriginMultiDestSingleOnlyOriginError(t *testing.T) {
 	mock := &routedMock{routes: []mockRoute{
 		{pathContains: "/v2/trips", body: tripsErr},
 		{pathContains: "/v2/stop-finder", queryMatches: map[string]string{"name_sf": "Tumultgränd"},
-			body: stopFinderResponse("Tumultgränd", "Tumultgränd 35", "Tumultgränd (skola)")},
+			body: stopFinderResponse("Tumultgränd 12", "Tumultgränd 35", "Tumultgränd (skola)")},
 		{pathContains: "/v2/stop-finder", queryMatches: map[string]string{"name_sf": "T-Centralen"},
 			body: stopFinderResponse("T-Centralen")},
 	}}
@@ -1185,7 +1191,7 @@ func TestTripsTool_BothAmbiguousReturnsBothCandidates(t *testing.T) {
 	mock := &routedMock{routes: []mockRoute{
 		{pathContains: "/v2/trips", body: tripsErr},
 		{pathContains: "/v2/stop-finder", queryMatches: map[string]string{"name_sf": "Tumultgränd"},
-			body: stopFinderResponse("Tumultgränd", "Tumultgränd 35")},
+			body: stopFinderResponse("Tumultgränd 12", "Tumultgränd 35")},
 		{pathContains: "/v2/stop-finder", queryMatches: map[string]string{"name_sf": "Centrum"},
 			body: stopFinderResponse("Vällingby centrum", "Kista centrum", "Farsta centrum")},
 	}}
@@ -2191,8 +2197,10 @@ func TestTripsTool_ExactMatchShadowsShorterSuffix(t *testing.T) {
 func TestTripsTool_ExactMatchNarrowGapStillAmbiguous(t *testing.T) {
 	tripsErr := `{"systemMessages":[{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"}]}`
 
+	// No candidate is named exactly "Jakobsberg", so the exact-name
+	// tie-break can't rescue the narrow gap.
 	finder := stopFinderResponseWithQualities(
-		stopFinderPair{Name: "Jakobsberg", Quality: 1000},
+		stopFinderPair{Name: "Jakobsbergs station", Quality: 1000},
 		stopFinderPair{Name: "Jakobsbergs centrum", Quality: 950},
 	)
 
@@ -2256,10 +2264,50 @@ func TestTripsTool_TiedTopScoresStillAmbiguous(t *testing.T) {
 func TestPickExactMatch(t *testing.T) {
 	cases := []struct {
 		name    string
+		query   string
 		cands   []locationCandidate
 		wantOK  bool
 		wantIdx int // index of winner in the input; only meaningful when wantOK
 	}{
+		{
+			name:  "tie broken by exact name",
+			query: "Slussen",
+			cands: []locationCandidate{
+				{Name: "Slussen (ersättningstrafik)", MatchQuality: 1000},
+				{Name: "Slussen", MatchQuality: 1000},
+			},
+			wantOK:  true,
+			wantIdx: 1,
+		},
+		{
+			name:  "narrow gap broken by exact name",
+			query: "Alvik",
+			cands: []locationCandidate{
+				{Name: "Alvik", MatchQuality: 1000},
+				{Name: "Alviks torg", MatchQuality: 980},
+			},
+			wantOK:  true,
+			wantIdx: 0,
+		},
+		{
+			name:  "exact name is case- and diacritic-insensitive",
+			query: "arstaberg",
+			cands: []locationCandidate{
+				{Name: "Årsta", MatchQuality: 1000},
+				{Name: "Årstaberg", MatchQuality: 1000},
+			},
+			wantOK:  true,
+			wantIdx: 1,
+		},
+		{
+			name:  "tie where both are exact stays ambiguous",
+			query: "Nockeby",
+			cands: []locationCandidate{
+				{Name: "Nockeby", MatchQuality: 1000},
+				{Name: "Nockeby", MatchQuality: 1000},
+			},
+			wantOK: false,
+		},
 		{
 			name:   "empty list",
 			cands:  nil,
@@ -2315,7 +2363,7 @@ func TestPickExactMatch(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			picked, shadowed, ok := pickExactMatch(tc.cands)
+			picked, shadowed, ok := pickExactMatch(tc.cands, tc.query)
 			if ok != tc.wantOK {
 				t.Fatalf("ok=%v, want %v", ok, tc.wantOK)
 			}
@@ -2571,5 +2619,178 @@ func TestTripsTool_RetryStillAmbiguousReturnsPicker(t *testing.T) {
 	}
 	if len(out.Candidates) != 1 || out.Candidates[0].Name != "Slussen" {
 		t.Errorf("expected the stop-finder candidates in the picker, got %+v", out.Candidates)
+	}
+}
+
+// resolve must request every object type too — otherwise stop_only=false
+// can never surface a POI.
+func TestResolveTool_RequestsAllObjectTypes(t *testing.T) {
+	mock := newMockDoer(loadTestData(t, "stop_finder.json"))
+	_, handler := ResolveTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": "Slussen"}
+	_, _ = handler(context.Background(), req)
+	if got := mock.lastReq.URL.Query().Get("any_obj_filter_sf"); got != "0" {
+		t.Errorf("expected any_obj_filter_sf=0, got %q", got)
+	}
+}
+
+// Live stop-finder returns "Slussen" and "Slussen (ersättningstrafik)"
+// both at 1000. The exact-name match must win the tie, with the other
+// attached as a shadowed warning — not a picker for the busiest
+// interchange in the city.
+func TestTripsTool_ExactNameBreaksQualityTie(t *testing.T) {
+	tripsErr := `{"systemMessages":[{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"}]}`
+	finder := stopFinderResponseWithQualities(
+		stopFinderPair{Name: "Slussen (ersättningstrafik)", Quality: 1000},
+		stopFinderPair{Name: "Slussen", Quality: 1000},
+	)
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", queryMatches: map[string]string{"name_origin": "Slussen"}, body: tripsErr},
+		{pathContains: "/v2/trips", body: loadTestData(t, "trips.json")},
+		{pathContains: "/v2/stop-finder", body: finder},
+	}}
+	_, handler := TripsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Slussen", "destination": "T-Centralen", "skip_deviations": true}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Error    string `json:"error"`
+		Warnings []struct {
+			Code   string             `json:"code"`
+			Picked *locationCandidate `json:"picked"`
+		} `json:"warnings"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if out.Error != "" {
+		t.Fatalf("exact name should win a quality tie, got %.300s", text)
+	}
+	if len(out.Warnings) != 1 || out.Warnings[0].Picked == nil || out.Warnings[0].Picked.Name != "Slussen" {
+		t.Errorf("expected exact_match_shadowed with picked=Slussen, got %+v", out.Warnings)
+	}
+	for _, c := range mock.calls {
+		if strings.Contains(c.URL.Path, "/v2/stop-finder") && c.URL.Query().Get("any_obj_filter_sf") != "0" {
+			t.Errorf("ambiguity stop-finder call must request all object types, got %q", c.URL.Query().Get("any_obj_filter_sf"))
+		}
+	}
+}
+
+// An exact-name match also wins a narrow gap; the runner-up is reported
+// as shadowed rather than forcing a picker round-trip.
+func TestTripsTool_ExactNameWinsNarrowGap(t *testing.T) {
+	tripsErr := `{"systemMessages":[{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"}]}`
+	finder := stopFinderResponseWithQualities(
+		stopFinderPair{Name: "Jakobsberg", Quality: 1000},
+		stopFinderPair{Name: "Jakobsbergs centrum", Quality: 950},
+	)
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", queryMatches: map[string]string{"name_origin": "Jakobsberg"}, body: tripsErr},
+		{pathContains: "/v2/trips", body: loadTestData(t, "trips.json")},
+		{pathContains: "/v2/stop-finder", body: finder},
+	}}
+	_, handler := TripsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Jakobsberg", "destination": "T-Centralen", "skip_deviations": true}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+	if strings.Contains(text, "ambiguous_") || !strings.Contains(text, "exact_match_shadowed") {
+		t.Errorf("expected auto-resolve with a shadowed warning, got %.300s", text)
+	}
+}
+
+// Live upstream does not sort by matchQuality ("Nockeby" query returns
+// [Nockeby (på Drottningholmsvägen) 1000, Nockebyhov 977, Nockeby 1000]).
+// resolve must rank by quality, break ties on the exact name, and order
+// candidates the same way.
+func TestResolveTool_RanksUnsortedUpstream(t *testing.T) {
+	body := `{"locations":[
+		{"coord":[59.3,17.9],"disassembledName":"Nockeby (på Drottningholmsvägen)","id":"9091001000003650","matchQuality":1000,"name":"Nockeby (på Drottningholmsvägen)","parent":{"name":"Bromma"},"type":"stop"},
+		{"coord":[59.3,17.9],"disassembledName":"Nockebyhov","id":"9091001000003651","matchQuality":977,"name":"Nockebyhov","parent":{"name":"Bromma"},"type":"stop"},
+		{"coord":[59.3,17.9],"disassembledName":"Nockeby","id":"9091001000009120","matchQuality":1000,"name":"Nockeby","parent":{"name":"Bromma"},"type":"stop"}
+	]}`
+	_, handler := ResolveTool(newMockDoer(body))
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": "Nockeby"}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Best       *resolvedSite  `json:"best"`
+		Candidates []resolvedSite `json:"candidates"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if out.Best == nil || out.Best.Name != "Nockeby" {
+		t.Fatalf("expected best=Nockeby (exact name at 1000), got %+v", out.Best)
+	}
+	if len(out.Candidates) != 2 || out.Candidates[0].Name != "Nockeby (på Drottningholmsvägen)" || out.Candidates[1].Name != "Nockebyhov" {
+		t.Errorf("expected candidates ordered by quality, got %+v", out.Candidates)
+	}
+}
+
+// Ambiguity must be judged against every stop candidate, not just the
+// four that survive the response cap. With stop_only=false, five POIs at
+// 1000 would otherwise hide a tied stop at position seven.
+func TestResolveTool_UnambiguousComputedBeforeCap(t *testing.T) {
+	body := `{"locations":[
+		{"coord":[59.0,18.0],"disassembledName":"A","id":"9091001000001001","matchQuality":1000,"name":"A","parent":{"name":"X"},"type":"stop"},
+		{"coord":[59.0,18.0],"disassembledName":"P1","id":"poi:1","matchQuality":1000,"name":"P1","parent":{"name":"X"},"type":"poi"},
+		{"coord":[59.0,18.0],"disassembledName":"P2","id":"poi:2","matchQuality":1000,"name":"P2","parent":{"name":"X"},"type":"poi"},
+		{"coord":[59.0,18.0],"disassembledName":"P3","id":"poi:3","matchQuality":1000,"name":"P3","parent":{"name":"X"},"type":"poi"},
+		{"coord":[59.0,18.0],"disassembledName":"P4","id":"poi:4","matchQuality":1000,"name":"P4","parent":{"name":"X"},"type":"poi"},
+		{"coord":[59.0,18.0],"disassembledName":"P5","id":"poi:5","matchQuality":1000,"name":"P5","parent":{"name":"X"},"type":"poi"},
+		{"coord":[59.0,18.0],"disassembledName":"B","id":"9091001000001002","matchQuality":1000,"name":"B","parent":{"name":"X"},"type":"stop"}
+	]}`
+	_, handler := ResolveTool(newMockDoer(body))
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": "X", "stop_only": false}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Best       *resolvedSite  `json:"best"`
+		Candidates []resolvedSite `json:"candidates"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if out.Best == nil {
+		t.Fatal("expected best")
+	}
+	if out.Best.Unambiguous {
+		t.Errorf("a tied stop beyond the candidate cap must still make best ambiguous")
+	}
+	if len(out.Candidates) != resolveCandidateCap {
+		t.Errorf("candidates should still be capped at %d, got %d", resolveCandidateCap, len(out.Candidates))
+	}
+}
+
+// stop_finder promises results ordered by match_quality; upstream doesn't
+// guarantee it, so the tool must sort.
+func TestStopFinderTool_SortsByMatchQuality(t *testing.T) {
+	body := `{"locations":[
+		{"coord":[59.3,17.9],"disassembledName":"Nockebyhov","id":"9091001000003651","matchQuality":977,"name":"Nockebyhov","type":"stop"},
+		{"coord":[59.3,17.9],"disassembledName":"Nockeby","id":"9091001000009120","matchQuality":1000,"name":"Nockeby","type":"stop"},
+		{"coord":[59.3,17.9],"disassembledName":"Nockeby kyrka","id":"poi:1","matchQuality":990,"name":"Nockeby kyrka","type":"poi"}
+	]}`
+	_, handler := StopFinderTool(newMockDoer(body))
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"name": "Nockeby"}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out []struct {
+		MatchQuality int `json:"match_quality"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for i := 1; i < len(out); i++ {
+		if out[i].MatchQuality > out[i-1].MatchQuality {
+			t.Fatalf("results not sorted by match_quality: %+v", out)
+		}
 	}
 }
