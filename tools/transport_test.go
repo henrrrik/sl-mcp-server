@@ -1790,6 +1790,8 @@ func TestTrimDepartures_NullBodyReturnsError(t *testing.T) {
 	_, err := trimDepartures([]byte("null"), nil, departuresFilters{}, false)
 	if err == nil {
 		t.Fatal("expected an error for null body, got nil")
+	}
+}
 
 func TestReadBodyLimited(t *testing.T) {
 	t.Run("body within limit is returned whole", func(t *testing.T) {
