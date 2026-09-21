@@ -483,35 +483,48 @@ const maxDeviationsPerLeg = 3
 func attachDeviations(tt *trimmedTrips, index map[deviationKey][]legDeviation) {
 	for ji := range tt.Journeys {
 		for li := range tt.Journeys[ji].Legs {
-			leg := &tt.Journeys[ji].Legs[li]
-			if leg.Line == "" {
-				continue
-			}
-			mode := modeToUpstreamTransport(leg.Mode)
-			if mode == "" {
-				continue
-			}
-			candidates, ok := index[deviationKey{line: leg.Line, mode: mode}]
-			if !ok {
-				continue
-			}
-			legTime, legTimeErr := parseDeviationTime(leg.Departure)
-			filtered := make([]legDeviation, 0, len(candidates))
-			for _, cand := range candidates {
-				if legTimeErr == nil && !deviationActiveAt(cand, legTime) {
-					continue
-				}
-				filtered = append(filtered, cand)
-			}
-			if len(filtered) > maxDeviationsPerLeg {
-				leg.HasMoreDeviations = true
-				filtered = filtered[:maxDeviationsPerLeg]
-			}
-			if len(filtered) > 0 {
-				leg.Deviations = filtered
-			}
+			attachLegDeviations(&tt.Journeys[ji].Legs[li], index)
 		}
 	}
+}
+
+// attachLegDeviations attaches the indexed deviations for one transit leg
+// that are active at its departure time, capped at maxDeviationsPerLeg.
+// Walking legs (no line) and unmapped modes are left untouched.
+func attachLegDeviations(leg *trimmedLeg, index map[deviationKey][]legDeviation) {
+	if leg.Line == "" {
+		return
+	}
+	mode := modeToUpstreamTransport(leg.Mode)
+	if mode == "" {
+		return
+	}
+	candidates, ok := index[deviationKey{line: leg.Line, mode: mode}]
+	if !ok {
+		return
+	}
+	filtered := activeDeviations(candidates, leg.Departure)
+	if len(filtered) > maxDeviationsPerLeg {
+		leg.HasMoreDeviations = true
+		filtered = filtered[:maxDeviationsPerLeg]
+	}
+	if len(filtered) > 0 {
+		leg.Deviations = filtered
+	}
+}
+
+// activeDeviations keeps the candidates active at the leg's departure time.
+// When the time can't be parsed every candidate is kept (conservative).
+func activeDeviations(candidates []legDeviation, departure string) []legDeviation {
+	legTime, err := parseDeviationTime(departure)
+	filtered := make([]legDeviation, 0, len(candidates))
+	for _, cand := range candidates {
+		if err == nil && !deviationActiveAt(cand, legTime) {
+			continue
+		}
+		filtered = append(filtered, cand)
+	}
+	return filtered
 }
 
 // parseDeviationTime parses a trips/deviation timestamp. RFC3339Nano handles

@@ -20,6 +20,11 @@ jobs:
 
       - run: go vet ./...
 
+      # Cyclomatic complexity gate, matching the pre-commit rule in CLAUDE.md.
+      # Test functions are exempt; the limit is for production code.
+      - run: go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
+      - run: gocyclo -over 10 -ignore '_test\.go$' .
+
   test:
     runs-on: ubuntu-latest
     steps:

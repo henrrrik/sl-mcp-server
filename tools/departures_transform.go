@@ -233,34 +233,24 @@ func extractID(v any) int {
 func scopeMatchesSite(scope map[string]any, site siteIdentity) bool {
 	stopAreas, _ := scope["stop_areas"].([]any)
 	stopPoints, _ := scope["stop_points"].([]any)
-
-	hasStopScope := len(stopAreas) > 0 || len(stopPoints) > 0
-	if hasStopScope {
-		for _, sa := range stopAreas {
-			if id := extractID(sa); id != 0 && site.stopAreaIDs[id] {
-				return true
-			}
-		}
-		for _, sp := range stopPoints {
-			if id := extractID(sp); id != 0 && site.stopPointIDs[id] {
-				return true
-			}
-		}
-		return false
+	if len(stopAreas) > 0 || len(stopPoints) > 0 {
+		return anyIDIn(stopAreas, site.stopAreaIDs) || anyIDIn(stopPoints, site.stopPointIDs)
 	}
-
-	lines, _ := scope["lines"].([]any)
-	if len(lines) > 0 {
-		for _, ln := range lines {
-			if id := extractID(ln); id != 0 && site.lineIDs[id] {
-				return true
-			}
-		}
-		return false
+	if lines, _ := scope["lines"].([]any); len(lines) > 0 {
+		return anyIDIn(lines, site.lineIDs)
 	}
-
 	// No scope at all — network-wide notice, keep.
 	return true
+}
+
+// anyIDIn reports whether any entry's numeric id is in set.
+func anyIDIn(entries []any, set map[int]bool) bool {
+	for _, e := range entries {
+		if id := extractID(e); id != 0 && set[id] {
+			return true
+		}
+	}
+	return false
 }
 
 // filterMessagesForSite decodes a /v1/messages snapshot and returns the
@@ -276,33 +266,33 @@ func filterMessagesForSite(msgsBody []byte, site siteIdentity, at time.Time) ([]
 	out := make([]any, 0)
 	for _, m := range msgs {
 		scope, _ := m["scope"].(map[string]any)
-		if scope == nil {
+		if scope == nil || !scopeMatchesSite(scope, site) || !messageActiveAt(m, at) {
 			continue
 		}
-		if !scopeMatchesSite(scope, site) {
-			continue
-		}
-		if !messageActiveAt(m, at) {
-			continue
-		}
-		entry := map[string]any{
-			"id":    m["deviation_case_id"],
-			"scope": scope,
-		}
-		if variants, ok := m["message_variants"].([]any); ok && len(variants) > 0 {
-			if v0, ok := variants[0].(map[string]any); ok {
-				entry["message"] = v0["details"]
-				if hdr, ok := v0["header"].(string); ok && hdr != "" {
-					entry["header"] = hdr
-				}
-			}
-		}
-		if pub, ok := m["publish"].(map[string]any); ok {
-			entry["publish"] = pub
-		}
-		out = append(out, entry)
+		out = append(out, stopDeviationEntry(m, scope))
 	}
 	return out, nil
+}
+
+// stopDeviationEntry reshapes one /v1/messages entry into the
+// { id, message, header, scope, publish } shape downstream consumers expect.
+func stopDeviationEntry(m, scope map[string]any) map[string]any {
+	entry := map[string]any{
+		"id":    m["deviation_case_id"],
+		"scope": scope,
+	}
+	if variants, ok := m["message_variants"].([]any); ok && len(variants) > 0 {
+		if v0, ok := variants[0].(map[string]any); ok {
+			entry["message"] = v0["details"]
+			if hdr, ok := v0["header"].(string); ok && hdr != "" {
+				entry["header"] = hdr
+			}
+		}
+	}
+	if pub, ok := m["publish"].(map[string]any); ok {
+		entry["publish"] = pub
+	}
+	return entry
 }
 
 // messageActiveAt checks that `at` falls inside publish.from..publish.upto.
