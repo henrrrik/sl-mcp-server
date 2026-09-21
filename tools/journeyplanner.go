@@ -116,97 +116,108 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 		mcp.WithNumber("number_of_trips", mcp.Description("Number of trips to return (1-3, default 3)")),
 		mcp.WithString("time", mcp.Description("ISO 8601 departure/arrival time (e.g. 2026-04-22T09:00:00+02:00). Defaults to now.")),
 		mcp.WithString("time_mode", mcp.Description("'depart' or 'arrive' (default 'depart'). Only meaningful when 'time' is set.")),
-		mcp.WithBoolean("verbose", mcp.Description("Return the raw upstream response including coords, stopSequence, and footpath details. Default false.")),
-		mcp.WithBoolean("skip_deviations", mcp.Description("Skip the second /v1/messages call that attaches active deviations to each transit leg. Default false.")),
+		mcp.WithBoolean("verbose", mcp.Description("Return the raw upstream response including coords, stopSequence, and footpath details, with the resolved block and any warnings injected at top level. The POI-drift and ambiguity guards still apply. Per-leg deviation enrichment is only available on the trimmed shape. Default false.")),
+		mcp.WithBoolean("skip_deviations", mcp.Description("Skip the second /v1/messages call that attaches active deviations to each transit leg. Only meaningful when verbose=false. Default false.")),
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		origin := strings.TrimSpace(request.GetString("origin", ""))
 		destination := strings.TrimSpace(request.GetString("destination", ""))
-		originIDArg := coerceSiteIDArg(request.GetArguments()["origin_id"])
-		destinationIDArg := coerceSiteIDArg(request.GetArguments()["destination_id"])
 
-		originParam, errResult := resolveTripSideParam("origin", origin, originIDArg)
-		if errResult != nil {
-			return errResult, nil
-		}
-		destParam, errResult := resolveTripSideParam("destination", destination, destinationIDArg)
+		params, errResult := buildTripsParams(request, origin, destination)
 		if errResult != nil {
 			return errResult, nil
 		}
 
-		originProvidedAsName := origin != ""
-		destProvidedAsName := destination != ""
-
-		numTrips := request.GetInt("number_of_trips", 3)
-		if numTrips < 1 {
-			numTrips = 1
-		} else if numTrips > 3 {
-			numTrips = 3
-		}
-
-		params := url.Values{
-			"type_origin":          {"any"},
-			"name_origin":          {originParam},
-			"type_destination":     {"any"},
-			"name_destination":     {destParam},
-			"calc_number_of_trips": {fmt.Sprintf("%d", numTrips)},
-		}
-
-		if errResult := applyTripTime(request, params); errResult != nil {
+		// Every path — verbose included — goes through the same guard chain:
+		// POI-drift rejection, ambiguity auto-resolution, and the re-checks
+		// on the retried body. verbose only changes the final shape.
+		body, warnings, errResult := fetchTripsWithAmbiguityResolution(ctx, client, params, origin, destination, origin != "", destination != "")
+		if errResult != nil {
 			return errResult, nil
 		}
 
 		if request.GetBool("verbose", false) {
-			return fetchVerboseTrips(ctx, client, params)
+			return verboseTripsResult(body, warnings), nil
 		}
-
-		body, warnings, errResult := fetchTripsWithAmbiguityResolution(ctx, client, params, origin, destination, originProvidedAsName, destProvidedAsName)
-		if errResult != nil {
-			return errResult, nil
-		}
-
-		tt, err := reshapeTrips(body)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to reshape trips response: %v", err)), nil
-		}
-		if tt == nil {
-			// Error-only upstream response — pass through verbatim so
-			// callers still see systemMessages.
-			return mcp.NewToolResultText(string(body)), nil
-		}
-
-		tt.Resolved = extractResolved(body)
-		tt.Warnings = warnings
-
-		if !request.GetBool("skip_deviations", false) {
-			enrichWithDeviations(ctx, client, tt)
-		}
-
-		out, err := json.Marshal(tt)
-		if err != nil {
-			return mcp.NewToolResultError(fmt.Sprintf("failed to encode trips response: %v", err)), nil
-		}
-		return mcp.NewToolResultText(string(out)), nil
+		return trimmedTripsResult(ctx, client, request, body, warnings), nil
 	}
 
 	return tool, handler
 }
 
-// fetchVerboseTrips returns the raw upstream /v2/trips body with only the
-// resolved echo block injected, leaving every other upstream field (coords,
-// stopSequence, footpath details) in place.
-func fetchVerboseTrips(ctx context.Context, client slclient.HTTPDoer, params url.Values) (*mcp.CallToolResult, error) {
-	u := slclient.BuildURL(journeyPlannerBase, "/v2/trips", params)
-	body, errResult := fetchJSONRaw(ctx, client, u)
+// buildTripsParams validates the origin/destination inputs and translates
+// the public arguments into the upstream's EFA query parameters.
+func buildTripsParams(request mcp.CallToolRequest, origin, destination string) (url.Values, *mcp.CallToolResult) {
+	originParam, errResult := resolveTripSideParam("origin", origin, coerceSiteIDArg(request.GetArguments()["origin_id"]))
 	if errResult != nil {
-		return errResult, nil
+		return nil, errResult
 	}
-	out, err := injectVerboseResolved(body)
+	destParam, errResult := resolveTripSideParam("destination", destination, coerceSiteIDArg(request.GetArguments()["destination_id"]))
+	if errResult != nil {
+		return nil, errResult
+	}
+
+	params := url.Values{
+		"type_origin":          {"any"},
+		"name_origin":          {originParam},
+		"type_destination":     {"any"},
+		"name_destination":     {destParam},
+		"calc_number_of_trips": {fmt.Sprintf("%d", clampNumTrips(request.GetInt("number_of_trips", 3)))},
+	}
+	if errResult := applyTripTime(request, params); errResult != nil {
+		return nil, errResult
+	}
+	return params, nil
+}
+
+func clampNumTrips(n int) int {
+	if n < 1 {
+		return 1
+	}
+	if n > 3 {
+		return 3
+	}
+	return n
+}
+
+// verboseTripsResult returns the raw upstream body with only the resolved
+// echo block and any disambiguation warnings injected at top level, leaving
+// every other upstream field (coords, stopSequence, footpath details) in
+// place. Per-leg deviation enrichment applies to the trimmed shape only.
+func verboseTripsResult(body []byte, warnings []tripWarning) *mcp.CallToolResult {
+	out, err := injectVerboseExtras(body, warnings)
 	if err != nil {
-		return mcp.NewToolResultText(string(body)), nil
+		return mcp.NewToolResultText(string(body))
 	}
-	return mcp.NewToolResultText(string(out)), nil
+	return mcp.NewToolResultText(string(out))
+}
+
+// trimmedTripsResult reshapes the upstream body into the LLM-friendly form
+// and, unless skipped, attaches active deviations to each transit leg.
+func trimmedTripsResult(ctx context.Context, client slclient.HTTPDoer, request mcp.CallToolRequest, body []byte, warnings []tripWarning) *mcp.CallToolResult {
+	tt, err := reshapeTrips(body)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to reshape trips response: %v", err))
+	}
+	if tt == nil {
+		// Error-only upstream response — pass through verbatim so
+		// callers still see systemMessages.
+		return mcp.NewToolResultText(string(body))
+	}
+
+	tt.Resolved = extractResolved(body)
+	tt.Warnings = warnings
+
+	if !request.GetBool("skip_deviations", false) {
+		enrichWithDeviations(ctx, client, tt)
+	}
+
+	out, err := json.Marshal(tt)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("failed to encode trips response: %v", err))
+	}
+	return mcp.NewToolResultText(string(out))
 }
 
 // resolveTripSideParam enforces exactly-one-of (name, id) and returns the
@@ -284,7 +295,18 @@ func fetchTripsWithAmbiguityResolution(ctx context.Context, client slclient.HTTP
 	if !originAmb && !destAmb {
 		return body, nil, nil
 	}
-	return resolveAmbiguity(ctx, client, params, origin, destination, originAmb, destAmb)
+
+	body, warnings, errResult := resolveAmbiguity(ctx, client, params, origin, destination, originAmb, destAmb)
+	if errResult != nil {
+		return nil, nil, errResult
+	}
+	// The first body carries no journeys whenever ambiguity is flagged, so
+	// the guard above never saw an endpoint. The retried body is the first
+	// chance to catch a by-name side that drifted onto a POI.
+	if errResult := rejectPoiResolutionIfNeeded(body, originByName, destByName); errResult != nil {
+		return nil, nil, errResult
+	}
+	return body, warnings, nil
 }
 
 // ambiguousByNameSide returns the broker's ambiguity flags, with id-provided
@@ -302,51 +324,96 @@ func ambiguousByNameSide(body []byte, originByName, destByName bool) (originAmb,
 	return
 }
 
+// ambiguousSide bundles what resolveAmbiguity knows about one trip endpoint.
+type ambiguousSide struct {
+	side      string // "origin" or "destination"
+	query     string
+	ambiguous bool
+	stops     []locationCandidate // stop-typed candidates only
+	all       []locationCandidate // every candidate, for not-a-stop payloads
+}
+
+func newAmbiguousSide(side, query string, ambiguous bool, cands []locationCandidate) ambiguousSide {
+	stops, all := splitStopCandidates(cands)
+	return ambiguousSide{side: side, query: query, ambiguous: ambiguous, stops: stops, all: all}
+}
+
+// notAStop reports whether name resolution found candidates but none of
+// them is a transit stop.
+func (s ambiguousSide) notAStop() bool {
+	return s.ambiguous && len(s.stops) == 0 && len(s.all) > 0
+}
+
 // resolveAmbiguity handles the stop-finder-and-retry path once we know at
 // least one side is ambiguous. It either returns the retried /v2/trips body
 // on successful auto-resolve (with any exact-match shadowing warnings), a
 // not-a-stop error for POI-only candidates, or a picker error listing the
-// remaining stop candidates.
+// remaining stop candidates — including when the retry itself comes back
+// ambiguous.
 func resolveAmbiguity(ctx context.Context, client slclient.HTTPDoer, params url.Values, origin, destination string, originAmb, destAmb bool) ([]byte, []tripWarning, *mcp.CallToolResult) {
 	oc, dc := fetchCandidatesInParallel(ctx, client, origin, destination, originAmb, destAmb)
-	ocStops, ocAll := splitStopCandidates(oc)
-	dcStops, dcAll := splitStopCandidates(dc)
-
-	if originAmb && len(ocStops) == 0 && len(ocAll) > 0 {
-		return nil, nil, buildNotAStopResult("origin_not_a_stop", origin, ocAll)
-	}
-	if destAmb && len(dcStops) == 0 && len(dcAll) > 0 {
-		return nil, nil, buildNotAStopResult("destination_not_a_stop", destination, dcAll)
+	o := newAmbiguousSide("origin", origin, originAmb, oc)
+	d := newAmbiguousSide("destination", destination, destAmb, dc)
+	for _, s := range []ambiguousSide{o, d} {
+		if s.notAStop() {
+			return nil, nil, buildNotAStopResult(s.side+"_not_a_stop", s.query, s.all)
+		}
 	}
 
-	var warnings []tripWarning
-	ocPicked, ocWarn, ocOK := resolveSide("origin", origin, originAmb, ocStops)
-	if ocWarn != nil {
-		warnings = append(warnings, *ocWarn)
-	}
-	dcPicked, dcWarn, dcOK := resolveSide("destination", destination, destAmb, dcStops)
-	if dcWarn != nil {
-		warnings = append(warnings, *dcWarn)
+	oPicked, oWarn, oOK := resolveSide(o.side, o.query, o.ambiguous, o.stops)
+	dPicked, dWarn, dOK := resolveSide(d.side, d.query, d.ambiguous, d.stops)
+	warnings := appendWarnings(nil, oWarn, dWarn)
+
+	if errResult := pickerIfUnresolved(o, d, !oOK, !dOK); errResult != nil {
+		return nil, nil, errResult
 	}
 
-	originNeedsPicker := originAmb && !ocOK
-	destNeedsPicker := destAmb && !dcOK
-	if originNeedsPicker || destNeedsPicker {
-		return nil, nil, buildAmbiguityErrorResult(origin, destination, originNeedsPicker, destNeedsPicker, ocStops, dcStops)
-	}
-
-	if originAmb {
-		params.Set("name_origin", ocPicked.ID)
-	}
-	if destAmb {
-		params.Set("name_destination", dcPicked.ID)
-	}
-	u := slclient.BuildURL(journeyPlannerBase, "/v2/trips", params)
-	body, errResult := fetchJSONRaw(ctx, client, u)
+	body, errResult := retryTrips(ctx, client, params, o, oPicked, d, dPicked)
 	if errResult != nil {
 		return nil, nil, errResult
 	}
+	// A retry that still comes back ambiguous is answered with the picker
+	// we already have, not with the broker's raw systemMessages (which
+	// would also drop the warnings collected so far).
+	stillO, stillD := detectAmbiguity(body)
+	if errResult := pickerIfUnresolved(o, d, stillO, stillD); errResult != nil {
+		return nil, nil, errResult
+	}
 	return body, warnings, nil
+}
+
+// pickerIfUnresolved returns the ambiguity picker for whichever flagged
+// side(s) still need the user to choose, or nil when none do. Sides the
+// broker never flagged are ignored — we hold no candidates for them.
+func pickerIfUnresolved(o, d ambiguousSide, originNeedsPicker, destNeedsPicker bool) *mcp.CallToolResult {
+	originNeedsPicker = originNeedsPicker && o.ambiguous
+	destNeedsPicker = destNeedsPicker && d.ambiguous
+	if !originNeedsPicker && !destNeedsPicker {
+		return nil
+	}
+	return buildAmbiguityErrorResult(o.query, d.query, originNeedsPicker, destNeedsPicker, o.stops, d.stops)
+}
+
+// retryTrips re-fetches /v2/trips with the auto-picked candidate ids in
+// place of the ambiguous names.
+func retryTrips(ctx context.Context, client slclient.HTTPDoer, params url.Values, o ambiguousSide, oPicked *locationCandidate, d ambiguousSide, dPicked *locationCandidate) ([]byte, *mcp.CallToolResult) {
+	if o.ambiguous {
+		params.Set("name_origin", oPicked.ID)
+	}
+	if d.ambiguous {
+		params.Set("name_destination", dPicked.ID)
+	}
+	u := slclient.BuildURL(journeyPlannerBase, "/v2/trips", params)
+	return fetchJSONRaw(ctx, client, u)
+}
+
+func appendWarnings(ws []tripWarning, extra ...*tripWarning) []tripWarning {
+	for _, w := range extra {
+		if w != nil {
+			ws = append(ws, *w)
+		}
+	}
+	return ws
 }
 
 // resolveSide decides what to do with the stop-typed candidates for one

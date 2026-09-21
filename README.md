@@ -47,8 +47,8 @@ Plan a trip between two locations. Returns a trimmed, LLM-friendly summary by de
 | `number_of_trips` | number | 1–3, default 3. |
 | `time` | string | ISO 8601, e.g. `2026-04-22T09:00:00+02:00`. Defaults to now. |
 | `time_mode` | `depart` \| `arrive` | Default `depart`. Only meaningful with `time`. |
-| `verbose` | bool | Default false. Return the raw upstream response (coords, stopSequence, footpath details). |
-| `skip_deviations` | bool | Default false. Skip the second `/v1/messages` call that attaches active deviations to each transit leg. |
+| `verbose` | bool | Default false. Return the raw upstream response (coords, stopSequence, footpath details) with `resolved` and `warnings` injected at top level. The guards below still apply; per-leg `deviations` are only attached on the trimmed shape. |
+| `skip_deviations` | bool | Default false. Skip the second `/v1/messages` call that attaches active deviations to each transit leg. Only meaningful when `verbose=false`. |
 
 **Trimmed response shape:**
 
