@@ -396,9 +396,10 @@ func TestDeviationsTool_IncludeFacilityKeepsLiftAlerts(t *testing.T) {
 	}
 }
 
-// Round 2, Section 1: flattenCategories handles both known upstream shapes
-// (plain []string and structured [{group, name}]) — upstream has emitted
-// both historically and both should round-trip as "GROUP:NAME" strings.
+// Round 2, Section 1: flattenCategories handles every shape upstream has
+// emitted: plain []string, structured [{group, name}] (historical) and
+// structured [{group, type}] (what live /v1/messages sends today). All
+// should round-trip as "GROUP:NAME" strings.
 func TestFlattenCategories(t *testing.T) {
 	cases := []struct {
 		name string
@@ -408,6 +409,8 @@ func TestFlattenCategories(t *testing.T) {
 		{"empty", `[]`, nil},
 		{"plain strings", `["PLANNED","FACILITY:LIFT"]`, []string{"PLANNED", "FACILITY:LIFT"}},
 		{"structured", `[{"group":"FACILITY","name":"LIFT"},{"group":"PLANNED"}]`, []string{"FACILITY:LIFT", "PLANNED"}},
+		{"live type key", `[{"group":"FACILITY","type":"LIFT"},{"group":"FACILITY","type":"ESCALATOR"}]`, []string{"FACILITY:LIFT", "FACILITY:ESCALATOR"}},
+		{"type preferred over name", `[{"group":"FACILITY","name":"OLD","type":"LIFT"}]`, []string{"FACILITY:LIFT"}},
 		{"mixed missing", `[{"name":"STANDALONE"},{"group":""}]`, []string{"STANDALONE"}},
 		{"malformed number", `42`, nil},
 	}
@@ -458,7 +461,7 @@ func facilityFixture() string {
 			"scope": {
 				"stop_areas": [{"id": 1021, "name": "Gamla stan", "type": "METROSTN"}]
 			},
-			"categories": [{"group":"FACILITY","name":"LIFT"}]
+			"categories": [{"group":"FACILITY","type":"LIFT"}]
 		},
 		{
 			"deviation_case_id": 201,
@@ -467,7 +470,7 @@ func facilityFixture() string {
 			"scope": {
 				"stop_areas": [{"id": 1051, "name": "T-Centralen", "type": "METROSTN"}]
 			},
-			"categories": [{"group":"FACILITY","name":"ESCALATOR"}]
+			"categories": [{"group":"FACILITY","type":"ESCALATOR"}]
 		}
 	]`
 }
