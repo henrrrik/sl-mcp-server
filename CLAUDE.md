@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-Storstockholms Lokaltrafik (SL) MCP Server is an MCP (Model Context Protocol) server proxy for SL public transport APIs. It exposes 11 tools over SSE transport, proxying three SL REST APIs: Deviations, Journey Planner v2, and Transport.
+Storstockholms Lokaltrafik (SL) MCP Server is an MCP (Model Context Protocol) server proxy for SL public transport APIs. It exposes 11 tools over Streamable HTTP (`/mcp`, stateless) and SSE (`/sse`) transports, proxying three SL REST APIs: Deviations, Journey Planner v2, and Transport.
 
 Hosted on Runway at https://sl-mcp-server.pqapp.dev
 
@@ -19,7 +19,7 @@ Hosted on Runway at https://sl-mcp-server.pqapp.dev
 - `tools/` — MCP tool definitions and handlers (deviations, transport, journeyplanner)
 - `testdata/` — canned JSON fixtures for tests
 - `server.go` — wires all tools into MCP server
-- `main.go` — SSE transport entry point, listens on PORT env
+- `main.go` — HTTP entry point (Streamable HTTP at `/mcp`, SSE at `/sse`), listens on PORT env
 
 ## Key Patterns
 - `HTTPDoer` interface is the testability seam — all tools accept it, tests inject a mock
