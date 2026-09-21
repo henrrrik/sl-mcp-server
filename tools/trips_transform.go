@@ -588,24 +588,36 @@ func resolvedFromStopEvent(e upstreamStopEvent) resolvedLocation {
 	return out
 }
 
-// injectVerboseResolved decodes the raw /v2/trips body, injects the resolved
-// echo block at top-level, and re-marshals. Used by verbose=true so callers
-// still see the resolved section even when the rest of the payload is
-// passed through untrimmed.
-func injectVerboseResolved(body []byte) ([]byte, error) {
+// injectVerboseExtras decodes the raw /v2/trips body, injects the resolved
+// echo block and any disambiguation warnings at top level, and re-marshals.
+// Used by verbose=true so callers still see both even when the rest of the
+// payload is passed through untrimmed.
+func injectVerboseExtras(body []byte, warnings []tripWarning) ([]byte, error) {
 	resolved := extractResolved(body)
-	if resolved == nil {
+	if resolved == nil && len(warnings) == 0 {
 		return body, nil
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, err
 	}
-	r, err := json.Marshal(resolved)
-	if err != nil {
-		return nil, err
+	if raw == nil {
+		return body, nil
 	}
-	raw["resolved"] = r
+	if resolved != nil {
+		r, err := json.Marshal(resolved)
+		if err != nil {
+			return nil, err
+		}
+		raw["resolved"] = r
+	}
+	if len(warnings) > 0 {
+		w, err := json.Marshal(warnings)
+		if err != nil {
+			return nil, err
+		}
+		raw["warnings"] = w
+	}
 	return json.Marshal(raw)
 }
 

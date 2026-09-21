@@ -2420,3 +2420,156 @@ func TestTripsTool_ResolvedOmitsSiteIDForStopAreaIDs(t *testing.T) {
 		}
 	}
 }
+
+// poiOriginJourney is a /v2/trips body whose first leg starts at a POI and
+// ends at a real stop — the "Järfälla kyrka → Järfälla Hyrkart" drift case.
+const poiOriginJourney = `{
+	"journeys": [{
+		"tripDuration": 600, "interchanges": 0,
+		"legs": [{
+			"duration": 600,
+			"origin": {"id": "poi:hyrkart", "name": "Järfälla Hyrkart", "type": "poi", "coord": [59.4, 17.85], "departureTimePlanned": "2026-04-22T09:00:00Z"},
+			"destination": {"id": "9025001000012559", "name": "Slussen", "type": "platform", "coord": [59.32, 18.07],
+				"parent": {"id": "9021001000009192", "name": "Slussen", "type": "stop", "properties": {"stopId": "18009192"}},
+				"arrivalTimePlanned": "2026-04-22T09:10:00Z"},
+			"transportation": {"disassembledName": "54", "product": {"name": "Buss"}}
+		}]
+	}]
+}`
+
+// poiDestinationJourney is the mirror image: a real stop origin, POI destination.
+const poiDestinationJourney = `{
+	"journeys": [{
+		"tripDuration": 600, "interchanges": 0,
+		"legs": [{
+			"duration": 600,
+			"origin": {"id": "9025001000012559", "name": "Slussen", "type": "platform", "coord": [59.32, 18.07],
+				"parent": {"id": "9021001000009192", "name": "Slussen", "type": "stop", "properties": {"stopId": "18009192"}},
+				"departureTimePlanned": "2026-04-22T09:00:00Z"},
+			"destination": {"id": "poi:hyrkart", "name": "Järfälla Hyrkart", "type": "poi", "coord": [59.4, 17.85], "arrivalTimePlanned": "2026-04-22T09:10:00Z"},
+			"transportation": {"disassembledName": "54", "product": {"name": "Buss"}}
+		}]
+	}]
+}`
+
+// The POI-drift guard must run on the verbose path too; verbose=true is a
+// shape choice, not an opt-out from "refuse to plan from the wrong place".
+func TestTripsTool_VerboseRejectsPOIResolution(t *testing.T) {
+	mock := &routedMock{routes: []mockRoute{{pathContains: "/v2/trips", body: poiOriginJourney}}}
+	_, handler := TripsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Järfälla kyrka", "destination": "Slussen", "verbose": true}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Error string `json:"error"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if out.Error != "origin_not_a_stop" {
+		t.Errorf("verbose=true bypassed the POI guard; expected origin_not_a_stop, got %.300s", text)
+	}
+}
+
+// Warnings collected during ambiguity resolution must survive on the
+// verbose path alongside the raw upstream payload.
+func TestTripsTool_VerboseCarriesWarnings(t *testing.T) {
+	tripsErr := `{"systemMessages":[{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"}]}`
+	finder := stopFinderResponseWithQualities(
+		stopFinderPair{Name: "Solna station", Quality: 1000},
+		stopFinderPair{Name: "Solna station norra", Quality: 850},
+	)
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", queryMatches: map[string]string{"name_origin": "Solna station"}, body: tripsErr},
+		{pathContains: "/v2/trips", body: loadTestData(t, "trips.json")},
+		{pathContains: "/v2/stop-finder", body: finder},
+	}}
+	_, handler := TripsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Solna station", "destination": "T-Centralen", "verbose": true}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Journeys []json.RawMessage `json:"journeys"`
+		Warnings []struct {
+			Code string `json:"code"`
+		} `json:"warnings"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v\n%.300s", err, text)
+	}
+	if len(out.Journeys) == 0 {
+		t.Fatalf("expected verbose journeys from the auto-resolve retry, got %.300s", text)
+	}
+	if len(out.Warnings) != 1 || out.Warnings[0].Code != "exact_match_shadowed" {
+		t.Errorf("expected exact_match_shadowed warning on verbose response, got %+v", out.Warnings)
+	}
+	if !strings.Contains(text, "stopSequence") {
+		t.Errorf("verbose response lost upstream-only fields")
+	}
+}
+
+// After an ambiguity retry, the retried body must go through the same POI
+// guard as a first-call body. The first call carries no journeys when
+// ambiguity is flagged, so a guard that only sees the first body is a
+// no-op exactly when auto-resolution happens.
+func TestTripsTool_RetriedBodyIsPOIGuarded(t *testing.T) {
+	tripsErr := `{"systemMessages":[{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"}]}`
+	singleStop := `{"locations":[
+		{"coord":[59.3,18.07],"disassembledName":"Slussen","id":"9091001000009192","matchQuality":1000,"name":"Slussen","parent":{"name":"Stockholm","type":"locality"},"type":"stop"}
+	]}`
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", queryMatches: map[string]string{"name_origin": "Sluss"}, body: tripsErr},
+		{pathContains: "/v2/trips", body: poiDestinationJourney},
+		{pathContains: "/v2/stop-finder", body: singleStop},
+	}}
+	_, handler := TripsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Sluss", "destination": "Järfälla kyrka", "skip_deviations": true}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Error string `json:"error"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if out.Error != "destination_not_a_stop" {
+		t.Errorf("retried body bypassed the POI guard; expected destination_not_a_stop, got %.300s", text)
+	}
+}
+
+// If the retry itself comes back ambiguous, return the structured picker
+// with the candidates we already have — not the broker's raw systemMessages
+// with the collected warnings silently dropped.
+func TestTripsTool_RetryStillAmbiguousReturnsPicker(t *testing.T) {
+	tripsErr := `{"systemMessages":[{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"}]}`
+	singleStop := `{"locations":[
+		{"coord":[59.3,18.07],"disassembledName":"Slussen","id":"9091001000009192","matchQuality":1000,"name":"Slussen","parent":{"name":"Stockholm","type":"locality"},"type":"stop"}
+	]}`
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: tripsErr}, // first call AND the retry
+		{pathContains: "/v2/stop-finder", body: singleStop},
+	}}
+	_, handler := TripsTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Sluss", "destination": "T-Centralen", "skip_deviations": true}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Error      string              `json:"error"`
+		Candidates []locationCandidate `json:"candidates"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if out.Error != "ambiguous_origin" {
+		t.Fatalf("expected ambiguous_origin picker after a still-ambiguous retry, got %.300s", text)
+	}
+	if len(out.Candidates) != 1 || out.Candidates[0].Name != "Slussen" {
+		t.Errorf("expected the stop-finder candidates in the picker, got %+v", out.Candidates)
+	}
+}

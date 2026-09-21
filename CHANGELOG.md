@@ -11,6 +11,18 @@
   to `departures` returned the wrong board. `site_id` now appears only
   when the planner echoed a true `909100100…` site GID; otherwise pass
   `resolved.*.name` to `resolve`.
+- The POI-drift guard, ambiguity auto-resolution and `exact_match_shadowed`
+  warnings now run on every path. Previously `verbose=true` returned before
+  any of them (so a query that drifted onto a POI came back as journeys
+  from the wrong place), and the body from an ambiguity retry was never
+  re-checked — the first body carries no journeys whenever ambiguity is
+  flagged, so the guard was a no-op exactly when auto-resolution happened.
+- A retry that still comes back ambiguous now returns the structured
+  picker with the candidates already fetched, instead of the broker's raw
+  `systemMessages` with the collected warnings dropped.
+- `verbose=true` responses carry `warnings` alongside `resolved`. Per-leg
+  deviation enrichment remains trimmed-shape only, and `skip_deviations`
+  is documented as such.
 
 ### deviations
 
