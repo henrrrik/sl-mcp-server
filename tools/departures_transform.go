@@ -2,6 +2,7 @@ package tools
 
 import (
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 )
@@ -48,6 +49,11 @@ func trimDepartures(depBody, msgsBody []byte, filters departuresFilters, verbose
 	var root map[string]any
 	if err := json.Unmarshal(depBody, &root); err != nil {
 		return nil, err
+	}
+	// A JSON `null` body decodes to a nil map without error; assigning
+	// stop_deviations into it below would panic.
+	if root == nil {
+		return nil, errors.New("upstream departures body was null")
 	}
 
 	if deps, ok := root["departures"].([]any); ok {
