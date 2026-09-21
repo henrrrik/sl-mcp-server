@@ -36,6 +36,11 @@ func TestNormalizeSiteID_AcceptsAllFourFormats(t *testing.T) {
 		{"gid Jakobsberg", "9091001000009702", 9702},
 		{"gid 5730 (python test case)", "9091001000005730", 5730},
 		{"gid 9731 (python test case)", "9091001000009731", 9731},
+		// Live stop_finder hands out GIDs with a non-zero variant digit in
+		// position 10 for some stops; the site id is always the final 6 digits.
+		{"gid Vaxholm (variant 1)", "9091001001002800", 2800},
+		{"gid Kista centrum (variant 1)", "9091001001009302", 9302},
+		{"gid Sollentuna station (variant 2)", "9091001002009506", 9506},
 	}
 
 	for _, tc := range cases {
