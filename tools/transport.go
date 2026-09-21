@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,7 +17,14 @@ import (
 
 const transportBase = "https://transport.integration.sl.se"
 
-const maxResponseSize = 5 * 1024 * 1024 // 5MB
+// maxResponseSize caps how much of an upstream body we buffer. The largest
+// catalog SL serves is /v1/stop-points at ~8 MB decompressed (the cap
+// applies after Go's transparent gzip inflate), so 16 MB leaves headroom.
+// Bodies over the cap are rejected with upstream_response_too_large rather
+// than silently truncated.
+const maxResponseSize = 16 * 1024 * 1024
+
+const errUpstreamResponseTooLarge = "upstream_response_too_large"
 
 func fetchJSON(ctx context.Context, client slclient.HTTPDoer, rawURL string) (*mcp.CallToolResult, error) {
 	body, errResult := fetchJSONRaw(ctx, client, rawURL)
@@ -57,12 +65,39 @@ func fetchJSONRaw(ctx context.Context, client slclient.HTTPDoer, rawURL string) 
 		return nil, mcp.NewToolResultError(fmt.Sprintf("SL API returned HTTP %d", resp.StatusCode))
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	body, tooLarge, err := readBodyLimited(resp.Body, maxResponseSize)
 	if err != nil {
 		return nil, mcp.NewToolResultError(err.Error())
 	}
+	if tooLarge {
+		return nil, mcp.NewToolResultError(tooLargeErrorJSON(rawURL))
+	}
 
 	return body, nil
+}
+
+// readBodyLimited reads at most limit bytes from r and reports whether r
+// held more than that. Reading limit+1 is what lets us tell "exactly at the
+// cap" apart from "truncated" — a plain LimitReader cannot.
+func readBodyLimited(r io.Reader, limit int64) (body []byte, tooLarge bool, err error) {
+	body, err = io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(body)) > limit {
+		return nil, true, nil
+	}
+	return body, false, nil
+}
+
+func tooLargeErrorJSON(rawURL string) string {
+	b, _ := json.Marshal(map[string]any{
+		"error":       errUpstreamResponseTooLarge,
+		"limit_bytes": maxResponseSize,
+		"url":         rawURL,
+		"hint":        "The upstream response exceeded the server's buffer cap. Narrow the request with query/limit parameters.",
+	})
+	return string(b)
 }
 
 func SitesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
