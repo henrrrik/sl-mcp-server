@@ -76,6 +76,26 @@ func fetchJSONRaw(ctx context.Context, client slclient.HTTPDoer, rawURL string) 
 	return body, nil
 }
 
+// prefetch starts fetching rawURL immediately and returns a func that
+// blocks for the result, so a fetch with no dependency on the primary
+// response (e.g. /v1/messages) overlaps it instead of following it. The
+// result channel is buffered, so an abandoned prefetch doesn't leak.
+func prefetch(ctx context.Context, client slclient.HTTPDoer, rawURL string) func() ([]byte, *mcp.CallToolResult) {
+	type result struct {
+		body      []byte
+		errResult *mcp.CallToolResult
+	}
+	ch := make(chan result, 1)
+	go func() {
+		body, errResult := fetchJSONRaw(ctx, client, rawURL)
+		ch <- result{body, errResult}
+	}()
+	return func() ([]byte, *mcp.CallToolResult) {
+		r := <-ch
+		return r.body, r.errResult
+	}
+}
+
 // readBodyLimited reads at most limit bytes from r and reports whether r
 // held more than that. Reading limit+1 is what lets us tell "exactly at the
 // cap" apart from "truncated" — a plain LimitReader cannot.
@@ -176,6 +196,11 @@ func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 		}
 
 		params := url.Values{}
+		// /v1/messages doesn't depend on the departures response, so start
+		// it now and let the two fetches overlap.
+		msgsURL := slclient.BuildURL(deviationsBase, "/v1/messages", url.Values{"future": {"true"}})
+		messages := prefetch(ctx, client, msgsURL)
+
 		path := fmt.Sprintf("/v1/sites/%d/departures", siteID)
 		u := slclient.BuildURL(transportBase, path, params)
 
@@ -184,11 +209,9 @@ func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 			return errResult, nil
 		}
 
-		// Best-effort fetch of /v1/messages so we can rebuild stop_deviations
-		// from a trustworthy source. If this fails, trimDepartures falls back
-		// to filtering upstream's (less trustworthy) list.
-		msgsURL := slclient.BuildURL(deviationsBase, "/v1/messages", url.Values{"future": {"true"}})
-		msgsBody, _ := fetchJSONRaw(ctx, client, msgsURL)
+		// Best-effort: if /v1/messages fails, trimDepartures falls back to
+		// filtering upstream's (less trustworthy) stop_deviations.
+		msgsBody, _ := messages()
 
 		trimmed, err := trimDepartures(body, msgsBody, filters, request.GetBool("verbose", false))
 		if err != nil {

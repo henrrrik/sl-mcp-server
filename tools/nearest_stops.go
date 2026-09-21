@@ -13,9 +13,10 @@ import (
 )
 
 // NearestStopsTool reports the closest SL sites to a given coordinate,
-// ordered by distance. The /v1/sites catalog is fetched once and filtered
-// in-process with a haversine distance calculation — no geocoding and no
-// per-request upstream coord lookup.
+// ordered by distance. The /v1/sites catalog (served from the response
+// cache between hourly refreshes) is filtered in-process with a haversine
+// distance calculation — no geocoding and no per-request upstream coord
+// lookup.
 //
 // Chains cleanly with external geocoders: hand the lat/lon of a user's
 // location (or a street address you've already resolved) to this tool,

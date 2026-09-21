@@ -3,9 +3,14 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -1847,5 +1852,46 @@ func TestMaxResponseSizeFitsStopPointsCatalog(t *testing.T) {
 	const liveStopPointsBytes = 8_088_934
 	if maxResponseSize < liveStopPointsBytes {
 		t.Fatalf("maxResponseSize=%d is below the live stop-points catalog (%d bytes)", maxResponseSize, liveStopPointsBytes)
+	}
+}
+
+// orderingDoer answers /v1/messages immediately and makes the departures
+// response wait until the messages request has been seen. If the two
+// fetches are sequential (messages after departures) the wait times out.
+type orderingDoer struct {
+	messagesSeen chan struct{}
+	once         sync.Once
+	depBody      string
+}
+
+func (d *orderingDoer) Do(req *http.Request) (*http.Response, error) {
+	switch {
+	case strings.Contains(req.URL.Path, "/v1/messages"):
+		d.once.Do(func() { close(d.messagesSeen) })
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("[]"))}, nil
+	default:
+		select {
+		case <-d.messagesSeen:
+		case <-time.After(500 * time.Millisecond):
+			return nil, errors.New("departures fetch completed before /v1/messages was requested")
+		}
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(d.depBody))}, nil
+	}
+}
+
+// /v1/messages has no dependency on the departures response, so it must be
+// fetched concurrently rather than strictly afterwards.
+func TestDeparturesTool_FetchesMessagesConcurrently(t *testing.T) {
+	mock := &orderingDoer{messagesSeen: make(chan struct{}), depBody: loadTestData(t, "departures.json")}
+	_, handler := DeparturesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": "9001"}
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got %s", errResultText(result))
 	}
 }

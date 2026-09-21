@@ -131,6 +131,14 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 			return errResult, nil
 		}
 
+		// /v1/messages doesn't depend on the planner, so start it now and let
+		// it overlap the (up to four) planner hops. Only the trimmed shape
+		// attaches per-leg deviations.
+		var messages func() ([]byte, *mcp.CallToolResult)
+		if !request.GetBool("verbose", false) && !request.GetBool("skip_deviations", false) {
+			messages = prefetch(ctx, client, slclient.BuildURL(deviationsBase, "/v1/messages", url.Values{"future": {"true"}}))
+		}
+
 		// Every path — verbose included — goes through the same guard chain:
 		// POI-drift rejection, ambiguity auto-resolution, and the re-checks
 		// on the retried body. verbose only changes the final shape.
@@ -142,7 +150,7 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 		if request.GetBool("verbose", false) {
 			return verboseTripsResult(body, warnings), nil
 		}
-		return trimmedTripsResult(ctx, client, request, body, warnings), nil
+		return trimmedTripsResult(body, warnings, messages), nil
 	}
 
 	return tool, handler
@@ -196,8 +204,9 @@ func verboseTripsResult(body []byte, warnings []tripWarning) *mcp.CallToolResult
 }
 
 // trimmedTripsResult reshapes the upstream body into the LLM-friendly form
-// and, unless skipped, attaches active deviations to each transit leg.
-func trimmedTripsResult(ctx context.Context, client slclient.HTTPDoer, request mcp.CallToolRequest, body []byte, warnings []tripWarning) *mcp.CallToolResult {
+// and, when a messages prefetch was started, attaches active deviations to
+// each transit leg.
+func trimmedTripsResult(body []byte, warnings []tripWarning, messages func() ([]byte, *mcp.CallToolResult)) *mcp.CallToolResult {
 	tt, err := reshapeTrips(body)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("failed to reshape trips response: %v", err))
@@ -211,8 +220,8 @@ func trimmedTripsResult(ctx context.Context, client slclient.HTTPDoer, request m
 	tt.Resolved = extractResolved(body)
 	tt.Warnings = warnings
 
-	if !request.GetBool("skip_deviations", false) {
-		enrichWithDeviations(ctx, client, tt)
+	if messages != nil {
+		enrichWithDeviations(tt, messages)
 	}
 
 	out, err := json.Marshal(tt)
@@ -247,13 +256,12 @@ func resolveTripSideParam(side, name, idArg string) (string, *mcp.CallToolResult
 	return gid, nil
 }
 
-// enrichWithDeviations fetches active /v1/messages entries and attaches any
-// that match each transit leg's (line, mode). Failures are swallowed — the
-// trips response is still returned without deviations.
-func enrichWithDeviations(ctx context.Context, client slclient.HTTPDoer, tt *trimmedTrips) {
-	params := url.Values{"future": {"true"}}
-	u := slclient.BuildURL(deviationsBase, "/v1/messages", params)
-	body, errResult := fetchJSONRaw(ctx, client, u)
+// enrichWithDeviations waits for the prefetched /v1/messages snapshot and
+// attaches any active entry that matches each transit leg's (line, mode).
+// Failures are swallowed — the trips response is still returned without
+// deviations.
+func enrichWithDeviations(tt *trimmedTrips, messages func() ([]byte, *mcp.CallToolResult)) {
+	body, errResult := messages()
 	if errResult != nil {
 		return
 	}

@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### server
+
+- In-memory response cache for the slowly-changing upstream payloads:
+  `/v1/sites`, `/v1/lines`, `/v1/stop-points` and
+  `/v1/transport-authorities` for 1 hour, `/v1/messages` for 30 seconds.
+  Previously every `sites` / `nearest_stops` call re-downloaded the
+  1.35 MB site catalog and every `stop_points` call ~8 MB, and every
+  `departures` and `trips` call re-fetched the 360 KB deviations
+  snapshot. Concurrent misses for one URL are coalesced into a single
+  upstream fetch. Real-time endpoints are never cached.
+- `departures` and `trips` now fetch `/v1/messages` concurrently with
+  their primary request instead of strictly afterwards.
+- The HTTP transport keeps up to 16 idle connections per SL host (Go's
+  default is 2), so bursts of tool calls reuse connections instead of
+  paying a TLS handshake each.
+
 ### trips
 
 - `resolved.*.site_id` is no longer derived from the planner's 18xx

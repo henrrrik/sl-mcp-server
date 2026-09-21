@@ -11,9 +11,14 @@ type HTTPDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// NewClient returns an HTTPDoer with sensible timeouts.
+// NewClient returns an HTTPDoer with sensible timeouts. The transport keeps
+// more idle connections per host than the default (2): every tool call
+// hits one of three SL hosts, so a burst of calls would otherwise tear
+// down connections and pay a new TLS handshake each time.
 func NewClient() HTTPDoer {
-	return &http.Client{Timeout: 15 * time.Second}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConnsPerHost = 16
+	return &http.Client{Timeout: 15 * time.Second, Transport: transport}
 }
 
 // BuildURL constructs a full URL from base, path, and query parameters.
