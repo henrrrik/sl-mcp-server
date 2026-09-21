@@ -31,10 +31,11 @@ type resolveResponse struct {
 // flood the response. Round 2 spec: best + up to 4 runners-up.
 const resolveCandidateCap = 4
 
-// unambiguous thresholds: a clear winner scores >= 1000 AND beats the next
-// stop candidate by at least 50 points. Genuine ambiguity (two pendeltåg
-// stations both at 1000 quality) fails the delta check and stays flagged
-// ambiguous so the caller still knows to disambiguate.
+// unambiguous thresholds: a clear winner scores >= 1000 AND either beats
+// the next stop candidate by at least 50 points or is the only one of the
+// two named exactly as the query. Genuine ambiguity (two pendeltåg stations
+// both at 1000 quality, neither the literal query) fails both checks and
+// stays flagged so the caller still knows to disambiguate.
 const (
 	resolveUnambiguousQualityMin = 1000
 	resolveUnambiguousDeltaMin   = 50
@@ -49,16 +50,53 @@ func isStopType(typ string) bool {
 }
 
 // buildResolveResponse reshapes a raw /v2/stop-finder body into the resolve
-// tool's shape: the single highest-quality stop as `best`, with the rest
-// preserved as `candidates`. All three id forms are computed for any
-// entry whose GID we can parse into a short site id.
+// tool's shape: the top-ranked stop as `best`, with the rest preserved as
+// `candidates`. Results are ranked by matchQuality with an exact-name
+// tie-break on query, since upstream does not guarantee quality order. All
+// three id forms are computed for any entry whose GID we can parse into a
+// short site id.
 //
 // When stopOnly is true (the default for resolve), non-stop entries are
 // dropped from both best and candidates. When false, non-stop entries can
 // appear in candidates but never as best — callers who asked for
 // "Järfälla Hyrkart" with stop_only=false still shouldn't plan trips from
 // a go-kart track.
-func buildResolveResponse(raw []byte, stopOnly bool) ([]byte, error) {
+func buildResolveResponse(raw []byte, query string, stopOnly bool) ([]byte, error) {
+	sites, err := decodeStopFinderSites(raw)
+	if err != nil {
+		return nil, err
+	}
+	rankByQuality(sites, query,
+		func(s resolvedSite) int { return s.MatchQuality },
+		func(s resolvedSite) string { return s.Name })
+
+	out := resolveResponse{}
+	for _, rs := range sites {
+		if stopOnly && !isStopType(rs.Type) {
+			continue
+		}
+		if out.Best == nil && isStopType(rs.Type) {
+			best := rs
+			out.Best = &best
+			continue
+		}
+		out.Candidates = append(out.Candidates, rs)
+	}
+
+	// Judge ambiguity against every candidate, then cap the payload — a
+	// tied stop must not become invisible just because it ranked fifth.
+	if out.Best != nil {
+		out.Best.Unambiguous = isUnambiguousResolve(*out.Best, out.Candidates, query)
+	}
+	if len(out.Candidates) > resolveCandidateCap {
+		out.Candidates = out.Candidates[:resolveCandidateCap]
+	}
+	return json.Marshal(out)
+}
+
+// decodeStopFinderSites decodes the upstream locations into resolvedSite
+// values, computing every id form for entries with a parseable site GID.
+func decodeStopFinderSites(raw []byte) ([]resolvedSite, error) {
 	var env struct {
 		Locations []struct {
 			ID               string    `json:"id"`
@@ -79,11 +117,8 @@ func buildResolveResponse(raw []byte, stopOnly bool) ([]byte, error) {
 		return nil, err
 	}
 
-	out := resolveResponse{}
+	sites := make([]resolvedSite, 0, len(env.Locations))
 	for _, loc := range env.Locations {
-		if stopOnly && !isStopType(loc.Type) {
-			continue
-		}
 		name := loc.DisassembledName
 		if name == "" {
 			name = loc.Name
@@ -100,47 +135,33 @@ func buildResolveResponse(raw []byte, stopOnly bool) ([]byte, error) {
 			rs.GID16 = siteIDToGID(short)
 			rs.GID180 = siteIDTo180(short)
 		}
-		if out.Best == nil && isStopType(loc.Type) {
-			best := rs
-			out.Best = &best
-			continue
-		}
-		if len(out.Candidates) >= resolveCandidateCap {
-			continue
-		}
-		out.Candidates = append(out.Candidates, rs)
+		sites = append(sites, rs)
 	}
-
-	if out.Best != nil {
-		out.Best.Unambiguous = isUnambiguousResolve(*out.Best, out.Candidates)
-	}
-
-	return json.Marshal(out)
+	return sites, nil
 }
 
 // isUnambiguousResolve returns true when the best match scores at least
-// resolveUnambiguousQualityMin AND outranks the next-best STOP candidate
-// by at least resolveUnambiguousDeltaMin. Non-stop candidates don't count
+// resolveUnambiguousQualityMin AND either outranks the next-best STOP
+// candidate by resolveUnambiguousDeltaMin or is the only one of the two
+// named exactly as the query. Candidates arrive ranked, so the first
+// stop-typed one is the strongest rival. Non-stop candidates don't count
 // toward ambiguity — a POI that happens to share a name doesn't reduce
 // confidence in the stop match.
-func isUnambiguousResolve(best resolvedSite, candidates []resolvedSite) bool {
+func isUnambiguousResolve(best resolvedSite, candidates []resolvedSite, query string) bool {
 	if best.MatchQuality < resolveUnambiguousQualityMin {
 		return false
 	}
-	nextStopQ := -1
 	for _, c := range candidates {
 		if !isStopType(c.Type) {
 			continue
 		}
-		if c.MatchQuality > nextStopQ {
-			nextStopQ = c.MatchQuality
+		if best.MatchQuality-c.MatchQuality >= resolveUnambiguousDeltaMin {
+			return true
 		}
+		return nameMatchesQuery(best.Name, query) && !nameMatchesQuery(c.Name, query)
 	}
-	if nextStopQ < 0 {
-		// No other stop candidates — unambiguous by elimination.
-		return true
-	}
-	return best.MatchQuality-nextStopQ >= resolveUnambiguousDeltaMin
+	// No other stop candidates — unambiguous by elimination.
+	return true
 }
 
 // siteIDFromStopFinderEntry returns the short-form site id for a
@@ -171,7 +192,8 @@ func siteIDFromStopFinderEntry(gid, stopID string) (int, bool) {
 // departures tool accepts that form directly via its site_id normalizer,
 // so no pre-normalization is needed here. Non-stop entries (type != "stop")
 // are kept so callers can still resolve addresses/POIs for trip planning.
-func trimStopFinder(raw []byte) ([]byte, error) {
+// Results are ranked by match_quality since upstream doesn't guarantee it.
+func trimStopFinder(raw []byte, query string) ([]byte, error) {
 	var env struct {
 		Locations []json.RawMessage `json:"locations"`
 	}
@@ -203,6 +225,9 @@ func trimStopFinder(raw []byte) ([]byte, error) {
 		}
 		trimmed = append(trimmed, out)
 	}
+	rankByQuality(trimmed, query,
+		func(l trimmedLocation) int { return l.MatchQuality },
+		func(l trimmedLocation) string { return l.Name })
 	return json.Marshal(trimmed)
 }
 

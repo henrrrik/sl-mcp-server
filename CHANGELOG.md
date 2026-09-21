@@ -24,6 +24,30 @@
   deviation enrichment remains trimmed-shape only, and `skip_deviations`
   is documented as such.
 
+### stop-finder ranking (trips, resolve, stop_finder)
+
+- Every `/v2/stop-finder` call now sends `any_obj_filter_sf=0`. The
+  previous value (`2`) restricted upstream to stops only, which made
+  `resolve(stop_only=false)`, `stop_finder`'s address/POI results and the
+  `origin_not_a_stop` / `destination_not_a_stop` candidate branch in
+  `trips` unreachable in practice.
+- Results are ranked server-side by `match_quality` with an exact-name
+  tie-break (case- and diacritic-insensitive). Upstream does not sort: a
+  "Nockeby" query returned the bus stop *Nockeby (på Drottningholmsvägen)*
+  ahead of the tram terminus *Nockeby*, both at 1000, and `resolve` crowned
+  the wrong one.
+- `trips` auto-resolves when the top candidate is the only one named
+  exactly as the query, even at a quality tie or narrow gap. Live data has
+  *Slussen* / *Slussen (ersättningstrafik)* tied at 1000 and *Alvik*,
+  *Sundbyberg*, *Odenplan* within 20–52 points of a runner-up, so by-name
+  trips for the busiest stations always ended in a picker. The runner-up is
+  still reported in the `exact_match_shadowed` warning.
+- `resolve.best.unambiguous` uses the same exact-name rule and is now
+  computed against every stop candidate *before* `candidates` is capped
+  at 4, so a tied stop in fifth place no longer yields `unambiguous=true`.
+- Picker, not-a-stop and shadowed lists are capped at 5 after ranking,
+  so the strongest candidates are the ones shown.
+
 ### deviations
 
 - Fixes an accessibility regression: `deviations(transport_mode="METRO")`
