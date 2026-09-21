@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### trips
+
+- `resolved.*.site_id` is no longer derived from the planner's 18xx
+  `stopId` or `9021…` stop-area GIDs. Those encode stop-area ids, which
+  collide with the site-id space — the README example echoed `site_id:
+  5310` for Stockholm City, but site 5310 is Brunnby Vik, so feeding it
+  to `departures` returned the wrong board. `site_id` now appears only
+  when the planner echoed a true `909100100…` site GID; otherwise pass
+  `resolved.*.name` to `resolve`.
+
 ### deviations
 
 - Fixes an accessibility regression: `deviations(transport_mode="METRO")`

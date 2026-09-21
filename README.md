@@ -30,13 +30,13 @@ SL hands out four id forms for the same stop; all are interchangeable at the ser
 - **Short form** — e.g. `9702` for Jakobsberg. Returned by `sites`, `resolve.best.short_id`, `nearest_stops`.
 - **8-digit 18xx form** — e.g. `18009702`. Returned by `stop_finder.properties.stopId`, `resolve.best.gid_180`.
 - **9-digit 3BA1CDEFG form** — e.g. `300109702`. Documented by Trafiklab.
-- **16-digit GID** — e.g. `9091001000009702`. Returned by `stop_finder.id`, `resolve.best.gid_16`, and echoed in `trips.resolved`.
+- **16-digit GID** — e.g. `9091001000009702`. Returned by `stop_finder.id` and `resolve.best.gid_16`.
 
 Every tool that takes a site parameter (`departures.site_id`, `deviations.site`, `trips.origin_id` / `destination_id`) normalizes all four forms. Pass 16-digit GIDs as **strings** — they exceed JS `Number.MAX_SAFE_INTEGER` and lose precision if passed as numbers.
 
 ### `trips`
 
-Plan a trip between two locations. Returns a trimmed, LLM-friendly summary by default; pass `verbose=true` for the full upstream payload. Every successful response carries a `resolved` block echoing the actual origin/destination the planner used so callers can detect silent drift.
+Plan a trip between two locations. Returns a trimmed, LLM-friendly summary by default; pass `verbose=true` for the full upstream payload. Every successful response carries a `resolved` block echoing the actual origin/destination the planner used so callers can detect silent drift. Note that `resolved.*.id` is the journey planner's own location GID (a `9021…` stop-area id for stops), **not** a site id — to get one, pass `resolved.*.name` to `resolve`. `site_id` appears only when the planner echoed a true `909100100…` site GID.
 
 | Param | Type | Notes |
 |---|---|---|
