@@ -13,14 +13,29 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// mockHTTPDoer answers every request with the same status and body, building
+// a fresh Response per call so concurrent fetches don't share a reader.
+//
+// lastReq is the most recent request. departures and trips prefetch
+// /v1/messages concurrently with their primary request, which makes
+// lastReq nondeterministic for them — tests asserting on a trips query
+// pass skip_deviations=true (or use routedMock and inspect calls).
 type mockHTTPDoer struct {
-	response *http.Response
-	lastReq  *http.Request
+	status int
+	body   string
+
+	mu      sync.Mutex
+	lastReq *http.Request
 }
 
 func (m *mockHTTPDoer) Do(req *http.Request) (*http.Response, error) {
+	m.mu.Lock()
 	m.lastReq = req
-	return m.response, nil
+	m.mu.Unlock()
+	return &http.Response{
+		StatusCode: m.status,
+		Body:       io.NopCloser(strings.NewReader(m.body)),
+	}, nil
 }
 
 func newMockDoer(body string) *mockHTTPDoer {
@@ -28,12 +43,7 @@ func newMockDoer(body string) *mockHTTPDoer {
 }
 
 func newMockDoerWithStatus(body string, status int) *mockHTTPDoer {
-	return &mockHTTPDoer{
-		response: &http.Response{
-			StatusCode: status,
-			Body:       io.NopCloser(strings.NewReader(body)),
-		},
-	}
+	return &mockHTTPDoer{status: status, body: body}
 }
 
 // routedMock dispatches responses by path-substring and records every call.

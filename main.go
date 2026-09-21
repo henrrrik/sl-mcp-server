@@ -21,7 +21,9 @@ func main() {
 		port = "5000"
 	}
 
-	client := slclient.NewClient()
+	// Catalogs and the deviations snapshot are served from memory between
+	// upstream refreshes; real-time endpoints always go upstream.
+	client := slclient.NewCachingClient(slclient.NewClient(), slclient.SLCacheRules)
 	mcpServer := NewSLServer(client)
 
 	sseServer := server.NewSSEServer(mcpServer,

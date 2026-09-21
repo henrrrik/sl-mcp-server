@@ -513,10 +513,9 @@ func TestTripsTool(t *testing.T) {
 	_, handler := TripsTool(mock)
 
 	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{
-		"origin":          "Slussen",
-		"destination":     "T-Centralen",
-		"skip_deviations": true,
+	req.Params.Arguments = map[string]any{"skip_deviations": true,
+		"origin":      "Slussen",
+		"destination": "T-Centralen",
 	}
 
 	result, err := handler(context.Background(), req)
@@ -551,8 +550,7 @@ func TestTripsTool_ClampsNumberOfTrips(t *testing.T) {
 	_, handler := TripsTool(mock)
 
 	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{
-		"origin":          "Slussen",
+	req.Params.Arguments = map[string]any{"origin": "Slussen",
 		"destination":     "T-Centralen",
 		"number_of_trips": float64(100),
 		"skip_deviations": true,
@@ -576,8 +574,7 @@ func TestTripsTool_TimeParamDepart(t *testing.T) {
 	_, handler := TripsTool(mock)
 
 	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{
-		"origin":          "Slussen",
+	req.Params.Arguments = map[string]any{"origin": "Slussen",
 		"destination":     "T-Centralen",
 		"time":            "2026-04-22T09:00:00+02:00",
 		"skip_deviations": true,
@@ -607,8 +604,7 @@ func TestTripsTool_TimeParamArrive(t *testing.T) {
 	_, handler := TripsTool(mock)
 
 	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{
-		"origin":          "Slussen",
+	req.Params.Arguments = map[string]any{"origin": "Slussen",
 		"destination":     "T-Centralen",
 		"time":            "2026-04-22T09:00:00+02:00",
 		"time_mode":       "arrive",
@@ -634,8 +630,7 @@ func TestTripsTool_TimeConvertsToStockholmLocal(t *testing.T) {
 
 	// 07:00 UTC = 09:00 CEST (Stockholm, April — DST active)
 	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{
-		"origin":          "Slussen",
+	req.Params.Arguments = map[string]any{"origin": "Slussen",
 		"destination":     "T-Centralen",
 		"time":            "2026-04-22T07:00:00Z",
 		"skip_deviations": true,
@@ -707,7 +702,7 @@ func TestTripsTool_NoTimeParamsOmitted(t *testing.T) {
 	_, handler := TripsTool(mock)
 
 	req := mcp.CallToolRequest{}
-	req.Params.Arguments = map[string]any{
+	req.Params.Arguments = map[string]any{"skip_deviations": true,
 		"origin":      "Slussen",
 		"destination": "T-Centralen",
 	}

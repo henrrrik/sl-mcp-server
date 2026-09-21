@@ -276,6 +276,10 @@ go build -o sl-mcp-server
 PORT=5000 ./sl-mcp-server
 ```
 
+### Caching
+
+Slowly-changing upstream payloads are cached in memory per process: the `/v1/sites`, `/v1/lines`, `/v1/stop-points` and `/v1/transport-authorities` catalogs for 1 hour, and the `/v1/messages` deviations snapshot for 30 seconds. Concurrent misses for the same URL are coalesced into one upstream fetch. Real-time endpoints (departures, trips, stop-finder) always go upstream. `departures` and `trips` fetch `/v1/messages` concurrently with their primary request.
+
 ## Development
 
 ```sh
