@@ -57,7 +57,9 @@ func (e *siteIDError) asJSON() string {
 //     https://support.trafiklab.se/org/trafiklabse/d/sl-olika-stationskoder-site-ids/
 //   - 16-digit GID (e.g. "9091001000009702" → 9702) — what stop_finder
 //     returns in its `id` field; exceeds JS Number.MAX_SAFE_INTEGER, so
-//     callers must pass as a string.
+//     callers must pass as a string. The digit after the 909100100 prefix
+//     is a variant marker (0 for most stops, 1 or 2 for some — e.g.
+//     Vaxholm is 9091001001002800); the site id is the final 6 digits.
 //
 // Error classes:
 //   - invalid_site_id_format: the input wasn't a plain non-negative integer.
@@ -97,11 +99,11 @@ func extractShort(s string) (int, bool) {
 	case 9:
 		return tailToInt(s[len(s)-5:]), true
 	case 16:
-		rest, ok := strings.CutPrefix(s, gidPrefix)
-		if !ok {
+		if !strings.HasPrefix(s, gidPrefix) {
 			return 0, false
 		}
-		return tailToInt(rest), true
+		// Skip the variant digit at position 10; the site id is the last 6.
+		return tailToInt(s[len(s)-6:]), true
 	default:
 		return 0, false
 	}
