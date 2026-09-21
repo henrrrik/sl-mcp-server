@@ -17,6 +17,16 @@
 - The HTTP transport keeps up to 16 idle connections per SL host (Go's
   default is 2), so bursts of tool calls reuse connections instead of
   paying a TLS handshake each.
+- Streamable HTTP transport served at `/mcp` (stateless) alongside SSE at
+  `/sse`. It survives restarts and multiple replicas; SSE sessions live in
+  one process and are dropped on every deploy. The root endpoint
+  advertises both.
+- Graceful shutdown closes SSE streams server-side before stopping the
+  listener. Previously `SSEServer.Shutdown` was never wired in, so with
+  any SSE client connected every deploy stalled for the full 5 s deadline
+  and then cut the streams mid-chunk.
+- `ReadHeaderTimeout` (10 s) and `IdleTimeout` (2 min) on the listener.
+  `WriteTimeout` stays unset because SSE streams are long-lived.
 
 ### trips
 

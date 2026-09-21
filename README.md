@@ -253,7 +253,10 @@ Slim entries carry `{id, designation, transport_mode, group_of_lines, name}`.
 
 No API key required — SL's integration APIs are open.
 
-The hosted instance is available as an SSE MCP server at `https://sl-mcp-server.pqapp.dev/sse`.
+The hosted instance serves two transports:
+
+- **Streamable HTTP** (recommended) at `https://sl-mcp-server.pqapp.dev/mcp` — stateless, so it survives server restarts and works behind multiple replicas.
+- **SSE** at `https://sl-mcp-server.pqapp.dev/sse` — for clients that only speak the older transport. Sessions live in one process and are dropped on restart.
 
 ### Claude Desktop
 
@@ -263,7 +266,7 @@ Add to your `claude_desktop_config.json`:
 {
   "mcpServers": {
     "sl": {
-      "url": "https://sl-mcp-server.pqapp.dev/sse"
+      "url": "https://sl-mcp-server.pqapp.dev/mcp"
     }
   }
 }
