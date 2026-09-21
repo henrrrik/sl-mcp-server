@@ -1790,5 +1790,60 @@ func TestTrimDepartures_NullBodyReturnsError(t *testing.T) {
 	_, err := trimDepartures([]byte("null"), nil, departuresFilters{}, false)
 	if err == nil {
 		t.Fatal("expected an error for null body, got nil")
+
+func TestReadBodyLimited(t *testing.T) {
+	t.Run("body within limit is returned whole", func(t *testing.T) {
+		body, tooLarge, err := readBodyLimited(strings.NewReader("0123456789"), 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if tooLarge {
+			t.Fatal("expected tooLarge=false for a body exactly at the limit")
+		}
+		if string(body) != "0123456789" {
+			t.Errorf("got %q", body)
+		}
+	})
+	t.Run("body over limit is flagged", func(t *testing.T) {
+		_, tooLarge, err := readBodyLimited(strings.NewReader("0123456789X"), 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !tooLarge {
+			t.Fatal("expected tooLarge=true for a body one byte over the limit")
+		}
+	})
+}
+
+// An upstream body larger than maxResponseSize must surface as a structured
+// error, not be silently truncated and handed to the caller as success.
+func TestFetchJSONRaw_OversizeBodyIsStructuredError(t *testing.T) {
+	mock := newMockDoer(strings.Repeat("x", maxResponseSize+1))
+	body, errResult := fetchJSONRaw(context.Background(), mock, "https://example.test/big")
+	if body != nil {
+		t.Fatalf("expected no body for oversize response, got %d bytes", len(body))
+	}
+	if errResult == nil || !errResult.IsError {
+		t.Fatal("expected an error result")
+	}
+	text := errResultText(errResult)
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(text), &payload); err != nil {
+		t.Fatalf("error payload is not JSON: %q", text)
+	}
+	if payload["error"] != errUpstreamResponseTooLarge {
+		t.Errorf("expected error=%s, got %v", errUpstreamResponseTooLarge, payload["error"])
+	}
+	if payload["limit_bytes"] != float64(maxResponseSize) {
+		t.Errorf("expected limit_bytes=%d, got %v", maxResponseSize, payload["limit_bytes"])
+	}
+}
+
+// The live /v1/stop-points catalog is ~8 MB decompressed; the cap must
+// leave room for it or the stop_points tool can never succeed.
+func TestMaxResponseSizeFitsStopPointsCatalog(t *testing.T) {
+	const liveStopPointsBytes = 8_088_934
+	if maxResponseSize < liveStopPointsBytes {
+		t.Fatalf("maxResponseSize=%d is below the live stop-points catalog (%d bytes)", maxResponseSize, liveStopPointsBytes)
 	}
 }
