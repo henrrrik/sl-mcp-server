@@ -2360,3 +2360,63 @@ func TestTripsTool_VerboseIncludesResolvedBlock(t *testing.T) {
 		}
 	}
 }
+
+// resolved.site_id must only be derived from a true site GID (909100100…).
+// The planner's own stop-area GIDs (9021…) and the 18xx stopId that travels
+// with them encode stop-area ids, which collide with the site-id space:
+// stop-area 5310 is Stockholm City, but site 5310 is Brunnby Vik.
+func TestResolvedFromStopEvent_IgnoresStopAreaIDs(t *testing.T) {
+	e := upstreamStopEvent{
+		ID: "9022001005310001", Name: "Stockholm City, Platform 1", Type: "platform",
+		Parent: &upstreamStopParent{
+			ID: "9021001005310000", Name: "Stockholm City", Type: "stop",
+			Properties: upstreamStopProperties{StopID: "18005310"},
+		},
+	}
+	got := resolvedFromStopEvent(e)
+	if got.SiteID != 0 {
+		t.Errorf("site_id must be omitted for a stop-area id, got %d", got.SiteID)
+	}
+	if got.ID != "9021001005310000" || got.Name != "Stockholm City" {
+		t.Errorf("parent identity should still be echoed, got %+v", got)
+	}
+}
+
+func TestResolvedFromStopEvent_DerivesSiteIDFromTrueSiteGID(t *testing.T) {
+	e := upstreamStopEvent{
+		ID: "9091001000009702", Name: "Jakobsberg", Type: "stop",
+	}
+	got := resolvedFromStopEvent(e)
+	if got.SiteID != 9702 {
+		t.Errorf("expected site_id 9702 from a 909100100… GID, got %d", got.SiteID)
+	}
+}
+
+// End-to-end on the real fixture: Stockholm City's stop-area id 5310 must
+// not surface as site_id (that would be Brunnby Vik's departures board).
+func TestTripsTool_ResolvedOmitsSiteIDForStopAreaIDs(t *testing.T) {
+	body := loadTestData(t, "trips.json")
+	_, handler := TripsTool(newMockDoer(body))
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{
+		"origin": "Vällingby", "destination": "Stockholm City", "skip_deviations": true,
+	}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Resolved struct {
+			Origin      map[string]any `json:"origin"`
+			Destination map[string]any `json:"destination"`
+		} `json:"resolved"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for side, loc := range map[string]map[string]any{"origin": out.Resolved.Origin, "destination": out.Resolved.Destination} {
+		if v, present := loc["site_id"]; present {
+			t.Errorf("resolved.%s.site_id should be omitted for stop-area ids, got %v", side, v)
+		}
+	}
+}

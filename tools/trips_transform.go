@@ -575,14 +575,12 @@ func resolvedFromStopEvent(e upstreamStopEvent) resolvedLocation {
 			out.Coord = e.Parent.Coord
 		}
 	}
-	// Derive the short site id from whichever id we have. Try the parent's
-	// 8-digit stopId first (clean short form); fall back to GID normalization.
-	if e.Parent != nil && e.Parent.Properties.StopID != "" {
-		if short, err := normalizeSiteID(e.Parent.Properties.StopID); err == nil {
-			out.SiteID = short
-		}
-	}
-	if out.SiteID == 0 && out.ID != "" {
+	// Only a true site GID (909100100…) maps to a site id. The planner's own
+	// 9021…/9022… stop-area and platform GIDs — and the 18xx stopId that
+	// travels with them — encode stop-area ids, which collide with the
+	// site-id space (stop-area 5310 is Stockholm City; site 5310 is Brunnby
+	// Vik). For those, site_id is omitted rather than guessed.
+	if strings.HasPrefix(out.ID, gidPrefix) {
 		if short, err := normalizeSiteID(out.ID); err == nil {
 			out.SiteID = short
 		}
