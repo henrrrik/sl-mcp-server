@@ -137,7 +137,7 @@ Traffic disruptions in the SL network. Messages are Swedish-only upstream.
 | `line` | number | Filter by line number. |
 | `transport_mode` | string | `BUS`, `METRO`, `TRAIN`, `TRAM`, `SHIP`, `FERRY`. Applied in-process. |
 | `include_facility` | bool | Default false. When true, FACILITY-category entries (lifts, escalators, closed entrances) are kept. Important for accessibility-aware trip planning. |
-| `verbose` | bool | Default false. Return the raw upstream payload unchanged. |
+| `verbose` | bool | Default false. Return the surviving entries in the raw upstream shape. `transport_mode` and `include_facility` apply either way. |
 
 **Slim response shape** (verbose=false, per entry):
 

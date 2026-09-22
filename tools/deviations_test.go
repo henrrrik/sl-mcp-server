@@ -566,3 +566,78 @@ func TestDeviationsTool_InvalidGIDStringEchoedVerbatim(t *testing.T) {
 		t.Errorf("expected site_id_out_of_range, got %s", text)
 	}
 }
+
+// verbose=true is a shape choice, not a filter opt-out: the in-process
+// transport_mode and facility filters must apply to the raw entries too.
+// Previously verbose returned fetchJSON before any client-side filtering,
+// so deviations(transport_mode="METRO", verbose=true) returned every mode.
+func deviationsVerboseCaseIDs(t *testing.T, args map[string]any) []int {
+	t.Helper()
+	_, handler := DeviationsTool(newMockDoer(facilityFixture()))
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = args
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	var entries []struct {
+		ID      int            `json:"deviation_case_id"`
+		Version int            `json:"version"`
+		Scope   map[string]any `json:"scope"`
+	}
+	if err := json.Unmarshal([]byte(text), &entries); err != nil {
+		t.Fatalf("parse: %v\n%s", err, text)
+	}
+	ids := make([]int, 0, len(entries))
+	for _, e := range entries {
+		ids = append(ids, e.ID)
+	}
+	return ids
+}
+
+func TestDeviationsTool_VerboseAppliesTransportModeFilter(t *testing.T) {
+	ids := deviationsVerboseCaseIDs(t, map[string]any{"transport_mode": "METRO", "verbose": true})
+	if len(ids) != 1 || ids[0] != 100 {
+		t.Errorf("verbose+transport_mode=METRO should keep only the metro entry, got %v", ids)
+	}
+}
+
+func TestDeviationsTool_VerboseDropsFacilityByDefault(t *testing.T) {
+	ids := deviationsVerboseCaseIDs(t, map[string]any{"verbose": true})
+	for _, id := range ids {
+		if id == 200 || id == 201 {
+			t.Fatalf("verbose should exclude FACILITY entries unless include_facility=true, got %v", ids)
+		}
+	}
+	if len(ids) != 2 {
+		t.Errorf("expected the two line-scoped entries, got %v", ids)
+	}
+}
+
+func TestDeviationsTool_VerboseIncludeFacilityWithMode(t *testing.T) {
+	ids := deviationsVerboseCaseIDs(t, map[string]any{"transport_mode": "METRO", "include_facility": true, "verbose": true})
+	want := map[int]bool{100: true, 200: true, 201: true}
+	if len(ids) != len(want) {
+		t.Fatalf("expected metro + both facility entries, got %v", ids)
+	}
+	for _, id := range ids {
+		if !want[id] {
+			t.Errorf("unexpected entry %d in %v", id, ids)
+		}
+	}
+}
+
+// The raw entries themselves must stay untrimmed on the verbose path.
+func TestDeviationsTool_VerboseKeepsRawShape(t *testing.T) {
+	_, handler := DeviationsTool(newMockDoer(facilityFixture()))
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"verbose": true}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+	for _, raw := range []string{`"message_variants"`, `"scope"`, `"publish"`} {
+		if !strings.Contains(text, raw) {
+			t.Errorf("verbose response lost upstream field %s", raw)
+		}
+	}
+}

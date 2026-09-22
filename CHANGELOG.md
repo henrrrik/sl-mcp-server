@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### deviations
+
+- `verbose=true` now applies the same in-process `transport_mode` and
+  `include_facility` filters as the slim path. Previously the verbose path
+  returned before any client-side filtering, so
+  `deviations(transport_mode="METRO", verbose=true)` silently returned
+  every mode (and every facility notice) with no indication.
+
 ### server
 
 - In-memory response cache for the slowly-changing upstream payloads:

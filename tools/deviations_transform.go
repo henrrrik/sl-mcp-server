@@ -50,6 +50,27 @@ func trimDeviationsList(raw []byte, filters deviationsClientFilters) ([]byte, er
 	return json.Marshal(out)
 }
 
+// filterRawDeviations applies the same in-process filters as
+// trimDeviationsList but returns the surviving upstream entries verbatim.
+// Used by verbose=true so the shape choice doesn't silently disable the
+// transport_mode and facility filters. Entries that can't be decoded are
+// passed through, matching the slim path's conservative stance.
+func filterRawDeviations(raw []byte, filters deviationsClientFilters) ([]byte, error) {
+	var entries []json.RawMessage
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, err
+	}
+	out := make([]json.RawMessage, 0, len(entries))
+	for _, e := range entries {
+		slim, ok := slimDeviationEntry(e)
+		if ok && !filters.keep(slim) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return json.Marshal(out)
+}
+
 // deviationsClientFilters is the in-process filter pass. transportMode is
 // lowercased when set; empty means "no mode filter". includeFacility
 // toggles whether FACILITY-category entries survive.
