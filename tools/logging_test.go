@@ -98,3 +98,16 @@ func TestWithLogging_ReportsStructuredErrorCodes(t *testing.T) {
 		})
 	}
 }
+
+// Coordinates are a user's location; keep them out of the persisted log.
+func TestFormatParams_RedactsCoordinates(t *testing.T) {
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"lat": 59.3311, "lon": 18.0593, "radius_m": 500}
+	out := formatParams(req)
+	if strings.Contains(out, "59.33") || strings.Contains(out, "18.05") {
+		t.Errorf("coordinates must be redacted, got %s", out)
+	}
+	if !strings.Contains(out, "lat=<redacted>") || !strings.Contains(out, "radius_m=500") {
+		t.Errorf("expected redacted lat/lon and other params intact, got %s", out)
+	}
+}

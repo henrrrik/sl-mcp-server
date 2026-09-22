@@ -296,7 +296,7 @@ func mapMode(name string) string {
 		return "metro"
 	case "Spårvagn":
 		return "tram"
-	case "Båt", "Skepp", "Ferja":
+	case "Båt", "Skepp", "Färja":
 		return "ship"
 	case "footpath":
 		return "walk"
@@ -662,6 +662,9 @@ func resolveCandidates(ctx context.Context, client slclient.HTTPDoer, query stri
 	u := slclient.BuildURL(journeyPlannerBase, "/v2/stop-finder", stopFinderParams(query))
 	body, errResult := fetchJSONRaw(ctx, client, u)
 	if errResult != nil {
+		return nil, errResult
+	}
+	if errResult := stopFinderBrokerError(body); errResult != nil {
 		return nil, errResult
 	}
 

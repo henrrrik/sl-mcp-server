@@ -173,21 +173,18 @@ func tooLargeErrorJSON(rawURL string) string {
 
 func SitesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("sites",
-		mcp.WithDescription("Enumerate SL's catalog of transit sites (stations/stops) and their canonical numeric site_ids. Use this to look up the site_id for tools like departures. Matching is exact substring only — for typo-tolerant or ranked name search, use stop_finder instead. The full list is ~6500 entries; combine query and limit to narrow the result."),
+		mcp.WithDescription("Enumerate SL's catalog of transit sites (stations/stops) and their canonical numeric site_ids. Use this to look up the site_id for tools like departures. Matching is exact substring only — for typo-tolerant or ranked name search, use stop_finder instead. The full list is ~6500 entries; the default page is 200, so combine query and limit to narrow the result, or pass limit=0 for the full catalog."),
 		mcp.WithString("query", mcp.Description("Case-insensitive substring match on site name. Exact substrings only — no fuzzy matching.")),
-		mcp.WithNumber("limit", mcp.Description("Maximum number of sites to return. Omitted or 0 means no limit.")),
+		mcp.WithNumber("limit", mcp.Description("Maximum number of sites to return. Default 200; pass 0 for the full catalog.")),
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		query := request.GetString("query", "")
-		limit := request.GetInt("limit", 0)
+		// A no-argument call used to return the whole ~1.3 MB catalog as one
+		// text result; page it by default and let limit=0 ask for everything.
+		limit := request.GetInt("limit", defaultSitesLimit)
 
 		u := slclient.BuildURL(transportBase, "/v1/sites", nil)
-
-		if query == "" && limit <= 0 {
-			return fetchJSON(ctx, client, u)
-		}
-
 		body, errResult := fetchJSONRaw(ctx, client, u)
 		if errResult != nil {
 			return errResult, nil
@@ -316,6 +313,10 @@ const defaultLinesLimit = 50
 // upcoming departures. SL's upstream typically returns 35; 20 is enough
 // for "when's my next X" queries without flooding the context.
 const defaultDeparturesLimit = 20
+
+// defaultSitesLimit pages a no-argument sites call; the full catalog is
+// ~6500 entries (~1.3 MB), far beyond any useful LLM context.
+const defaultSitesLimit = 200
 
 func StopPointsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 	tool := mcp.NewTool("stop_points",

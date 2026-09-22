@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -264,5 +265,37 @@ func TestNearestStopsTool_LimitZeroIsUnlimited(t *testing.T) {
 	_ = json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &out)
 	if len(out) != len(all) {
 		t.Errorf("limit=0 with a planet-sized radius should return every site (%d), got %d", len(all), len(out))
+	}
+}
+
+// Coordinates that can't match an SL stop must be an error, not an empty
+// result. Swapped lat/lon is the classic mistake — and a swapped Stockholm
+// pair is still valid WGS84, so a plain range check can't catch it; the
+// service-area check can, and the hint says so.
+func TestNearestStopsTool_RejectsOutOfRangeCoordinates(t *testing.T) {
+	_, handler := NearestStopsTool(newMockDoer(loadTestData(t, "sites.json")))
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"lat": 18.0593, "lon": 59.3311}
+	result, _ := handler(context.Background(), req)
+	if !result.IsError {
+		t.Fatalf("expected an error for lat=18.06 lon=59.33, got %s", result.Content[0].(mcp.TextContent).Text)
+	}
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, `"error":"invalid_coordinates"`) || !strings.Contains(strings.ToLower(text), "swapped") {
+		t.Errorf("expected invalid_coordinates with a swapped-coordinates hint, got %s", text)
+	}
+
+	req.Params.Arguments = map[string]any{"lat": 59.33, "lon": 181}
+	result, _ = handler(context.Background(), req)
+	if !result.IsError || !strings.Contains(result.Content[0].(mcp.TextContent).Text, `"error":"invalid_coordinates"`) {
+		t.Errorf("expected invalid_coordinates for lon=181")
+	}
+
+	// Gothenburg: valid WGS84, not swapped, but not SL territory either.
+	req.Params.Arguments = map[string]any{"lat": 57.71, "lon": 11.97}
+	result, _ = handler(context.Background(), req)
+	text = result.Content[0].(mcp.TextContent).Text
+	if !result.IsError || !strings.Contains(text, "service area") || strings.Contains(strings.ToLower(text), "swapped") {
+		t.Errorf("expected an out-of-service-area error without the swapped hint, got %s", text)
 	}
 }

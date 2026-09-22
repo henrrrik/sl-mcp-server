@@ -196,7 +196,7 @@ Find SL transit sites nearest to a lat/lon coordinate. Chains cleanly from an ex
 
 | Param | Type | Notes |
 |---|---|---|
-| `lat` | number | Required. WGS84 decimal degrees. |
+| `lat` | number | Required. WGS84 decimal degrees. Coordinates outside SL's service area (Stockholm region) return `invalid_coordinates`; a swapped lat/lon pair is called out in the hint. |
 | `lon` | number | Required. WGS84 decimal degrees. |
 | `radius_m` | number | Maximum search distance in metres. Default 500. |
 | `limit` | number | Maximum results. Default 5; `0` returns every stop within `radius_m`. |
@@ -233,7 +233,7 @@ Enumerate SL's ~6500-entry site catalog. Exact substring matching — for typo-t
 | Param | Type | Notes |
 |---|---|---|
 | `query` | string | Case-insensitive substring match on site name. |
-| `limit` | number | Cap on result count. `0` or omitted = no cap. |
+| `limit` | number | Default 200. Pass `0` for the full catalog (~6500 entries). |
 
 ### `lines`
 

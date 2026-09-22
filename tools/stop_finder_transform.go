@@ -2,7 +2,46 @@ package tools
 
 import (
 	"encoding/json"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
+
+// errStopFinder is the code for a /v2/stop-finder reply that carries a
+// broker error instead of locations.
+const errStopFinder = "stop_finder_error"
+
+// stopFinderBrokerError returns a structured error result when the body
+// has no locations and a systemMessages entry of type "error". Both
+// stop_finder and resolve decoded only `locations`, so such a reply
+// collapsed to an empty result. Returns nil for normal (even empty)
+// replies.
+func stopFinderBrokerError(raw []byte) *mcp.CallToolResult {
+	var env struct {
+		Locations      []json.RawMessage `json:"locations"`
+		SystemMessages []struct {
+			Type   string `json:"type"`
+			Module string `json:"module"`
+			Code   int    `json:"code"`
+			Text   string `json:"text"`
+		} `json:"systemMessages"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil || len(env.Locations) > 0 {
+		return nil
+	}
+	for _, m := range env.SystemMessages {
+		if m.Type != "error" {
+			continue
+		}
+		b, _ := json.Marshal(map[string]any{
+			"error":   errStopFinder,
+			"module":  m.Module,
+			"code":    m.Code,
+			"message": m.Text,
+		})
+		return mcp.NewToolResultError(string(b))
+	}
+	return nil
+}
 
 // resolvedSite is the canonical disambiguated site shape: one struct that
 // carries every id form a caller might need, plus the upstream's geocoding

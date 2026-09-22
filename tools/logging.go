@@ -83,7 +83,15 @@ func formatParams(req mcp.CallToolRequest) string {
 	}
 	parts := make([]string, 0, len(args))
 	for k, v := range args {
+		if redactedParams[k] {
+			parts = append(parts, k+"=<redacted>")
+			continue
+		}
 		parts = append(parts, fmt.Sprintf("%s=%v", k, v))
 	}
 	return "{" + strings.Join(parts, ", ") + "}"
 }
+
+// redactedParams are never written to the request log: coordinates are a
+// user's location.
+var redactedParams = map[string]bool{"lat": true, "lon": true}
