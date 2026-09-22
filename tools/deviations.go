@@ -22,7 +22,7 @@ func DeviationsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 		mcp.WithNumber("line", mcp.Description("Filter by line number")),
 		mcp.WithString("transport_mode", mcp.Description("Filter by mode: BUS, METRO, TRAIN, TRAM, SHIP, FERRY. Applied in-process so that FACILITY-category entries (which upstream drops under any transport_mode filter) can still surface when include_facility=true.")),
 		mcp.WithBoolean("include_facility", mcp.Description("Include lift/escalator/entrance alerts (categories with group=FACILITY). Default false — these are noise for most travelers but required for accessibility-aware trip planning, so wheelchair users and parents with strollers should pass include_facility=true.")),
-		mcp.WithBoolean("verbose", mcp.Description("Return the raw upstream payload with every field (version, created, priority, full scope, href links). Default false (slim summary). Note: verbose does not apply the facility filter — callers get whatever SL returned.")),
+		mcp.WithBoolean("verbose", mcp.Description("Return the raw upstream payload with every field (version, created, priority, full scope, href links). Default false (slim summary). The transport_mode and include_facility filters apply either way.")),
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -47,24 +47,28 @@ func DeviationsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 		transportMode := strings.TrimSpace(request.GetString("transport_mode", ""))
 		includeFacility := request.GetBool("include_facility", false)
 
-		u := slclient.BuildURL(deviationsBase, "/v1/messages", params)
-
-		if request.GetBool("verbose", false) {
-			return fetchJSON(ctx, client, u)
+		filters := deviationsClientFilters{
+			transportMode:   transportMode,
+			includeFacility: includeFacility,
 		}
 
+		u := slclient.BuildURL(deviationsBase, "/v1/messages", params)
 		body, errResult := fetchJSONRaw(ctx, client, u)
 		if errResult != nil {
 			return errResult, nil
 		}
-		slim, err := trimDeviationsList(body, deviationsClientFilters{
-			transportMode:   transportMode,
-			includeFacility: includeFacility,
-		})
+
+		// verbose only changes the per-entry shape; the filters apply to
+		// both paths.
+		reshape := trimDeviationsList
+		if request.GetBool("verbose", false) {
+			reshape = filterRawDeviations
+		}
+		out, err := reshape(body, filters)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to reshape deviations response: %v", err)), nil
 		}
-		return mcp.NewToolResultText(string(slim)), nil
+		return mcp.NewToolResultText(string(out)), nil
 	}
 
 	return tool, handler
