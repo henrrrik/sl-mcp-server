@@ -2,8 +2,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -14,15 +17,22 @@ import (
 )
 
 // startTestServer serves the real HTTP wiring on a random loopback port.
+// Access log lines go to the returned buffer.
 func startTestServer(t *testing.T) (base string, shutdown func(context.Context) error) {
+	base, shutdown, _ = startTestServerWithLog(t)
+	return base, shutdown
+}
+
+func startTestServerWithLog(t *testing.T) (base string, shutdown func(context.Context) error, logs *bytes.Buffer) {
 	t.Helper()
-	srv, shutdown := newHTTPServer("127.0.0.1:0", NewSLServer(slclient.NewClient()))
+	logs = &bytes.Buffer{}
+	srv, shutdown := newHTTPServer("127.0.0.1:0", NewSLServer(slclient.NewClient()), log.New(logs, "", 0))
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	go func() { _ = srv.Serve(ln) }()
-	return "http://" + ln.Addr().String(), shutdown
+	return "http://" + ln.Addr().String(), shutdown, logs
 }
 
 // A connected SSE client must not stall graceful shutdown: the stream has
@@ -117,7 +127,7 @@ func TestRootEndpoint_AdvertisesBothTransports(t *testing.T) {
 // slow or idle peer can't hold connections open indefinitely. WriteTimeout
 // must stay unset: SSE streams are long-lived by design.
 func TestHTTPServer_HasHeaderAndIdleTimeouts(t *testing.T) {
-	srv, _ := newHTTPServer("127.0.0.1:0", NewSLServer(slclient.NewClient()))
+	srv, _ := newHTTPServer("127.0.0.1:0", NewSLServer(slclient.NewClient()), log.New(io.Discard, "", 0))
 	if srv.ReadHeaderTimeout <= 0 {
 		t.Error("ReadHeaderTimeout must be set")
 	}
@@ -126,5 +136,71 @@ func TestHTTPServer_HasHeaderAndIdleTimeouts(t *testing.T) {
 	}
 	if srv.WriteTimeout != 0 {
 		t.Error("WriteTimeout must stay 0 for SSE")
+	}
+}
+
+const initializeBody = `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}`
+
+func postMCP(t *testing.T, url string) *http.Response {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, url, strings.NewReader(initializeBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+// Clients and UIs normalise URLs differently; a trailing slash on the MCP
+// endpoint must not turn into a 404 that a connector then misreads as
+// "needs sign-in".
+func TestStreamableHTTP_TrailingSlashAccepted(t *testing.T) {
+	base, shutdown := startTestServer(t)
+	defer shutdown(context.Background())
+	resp := postMCP(t, base+"/mcp/")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("POST /mcp/ should be served like /mcp, got %d", resp.StatusCode)
+	}
+}
+
+// Some clients probe the endpoint with HEAD before connecting.
+func TestStreamableHTTP_HeadIsOK(t *testing.T) {
+	base, shutdown := startTestServer(t)
+	defer shutdown(context.Background())
+	resp, err := http.Head(base + "/mcp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("HEAD /mcp should be 200, got %d", resp.StatusCode)
+	}
+}
+
+// Every request is logged with method, path, status and user agent — but
+// never the query string, which carries the SSE session id.
+func TestHTTPServer_AccessLog(t *testing.T) {
+	base, shutdown, logs := startTestServerWithLog(t)
+	defer shutdown(context.Background())
+
+	req, _ := http.NewRequest(http.MethodGet, base+"/does-not-exist?sessionId=secret", nil)
+	req.Header.Set("User-Agent", "probe/1.0")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	line := logs.String()
+	for _, want := range []string{"method=GET", "path=/does-not-exist", "status=404", `ua="probe/1.0"`} {
+		if !strings.Contains(line, want) {
+			t.Errorf("access log should contain %q, got: %s", want, line)
+		}
+	}
+	if strings.Contains(line, "secret") {
+		t.Errorf("access log must not contain the query string, got: %s", line)
 	}
 }
