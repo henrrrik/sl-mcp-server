@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### server
+
+- `/mcp/` (trailing slash) and `HEAD /mcp` are served instead of 404 —
+  a 404 on a connector's first request is easily misread as "this server
+  needs sign-in".
+- One access-log line per HTTP request (method, path, status, duration,
+  user agent; never the query string, which carries the SSE session id),
+  so connection problems can be diagnosed from the logs.
+
 ### small fixes
 
 - `nearest_stops` rejects coordinates outside SL's service area (Stockholm
