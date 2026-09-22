@@ -156,7 +156,7 @@ Traffic disruptions in the SL network. Messages are Swedish-only upstream.
 }
 ```
 
-Fields the slim shape drops: `version`, `created`, `priority.*`, `scope.lines[].transport_authority`, `href` link stubs, non-first `message_variants` (Swedish wins). `categories` normalizes both historical upstream shapes (plain `[]string` and structured `[{group, name}]`) to flat `"GROUP:NAME"` strings.
+Fields the slim shape drops: `version`, `created`, `priority.*`, `scope.lines[].transport_authority`, `href` link stubs, non-first `message_variants` (Swedish wins). `categories` normalizes every upstream shape — plain `[]string`, the historical `[{group, name}]`, and the live `[{group, type}]` — to flat `"GROUP:NAME"` strings such as `"FACILITY:LIFT"`.
 
 Why `transport_mode` is client-side: SL's upstream filter requires a `scope.lines[]` match, which drops every FACILITY entry (those are scoped by `stop_areas`). Moving the filter into the MCP server lets `include_facility=true` actually do what it says.
 
@@ -226,6 +226,8 @@ Fuzzy, ranked search for stops, stations, addresses and POIs. Tolerates typos an
 
 For the "turn a name into an id" use case, prefer `resolve` — it's ID-aware, drops POIs by default, and signals when a match is unambiguous. Use `stop_finder` directly when you specifically want ranked raw candidates.
 
+If SL's broker rejects the query, both `stop_finder` and `resolve` return `{"error":"stop_finder_error","module":"BROKER","code":…,"message":…}` rather than an empty result.
+
 ### `sites`
 
 Enumerate SL's ~6500-entry site catalog. Exact substring matching — for typo-tolerant or ranked search, use `stop_finder` or `resolve`.
@@ -260,19 +262,19 @@ The hosted instance serves two transports:
 - **Streamable HTTP** (recommended) at `https://sl-mcp-server.pqapp.dev/mcp` — stateless, so it survives server restarts and works behind multiple replicas.
 - **SSE** at `https://sl-mcp-server.pqapp.dev/sse` — for clients that only speak the older transport. Sessions live in one process and are dropped on restart. A Streamable HTTP client that was configured with this URL (it `POST`s here instead of opening the stream) is served as Streamable HTTP, so existing connectors keep working.
 
-### Claude Desktop
+### Claude Desktop / claude.ai
 
-Add to your `claude_desktop_config.json`:
+Remote MCP servers are added as **connectors**, not in `claude_desktop_config.json` (that file only configures local stdio servers):
 
-```json
-{
-  "mcpServers": {
-    "sl": {
-      "url": "https://sl-mcp-server.pqapp.dev/mcp"
-    }
-  }
-}
-```
+1. Settings → Connectors → **Add custom connector**
+2. Name: `SL`, URL: `https://sl-mcp-server.pqapp.dev/mcp`
+3. Leave the OAuth fields empty — the server needs no sign-in — and press **Connect**.
+
+The connector talks Streamable HTTP; a connector that was set up with the older `/sse` URL keeps working (see above). If you see *"Couldn't register with SL's sign-in service"*, the connector's first request got a non-2xx and Claude fell back to OAuth registration — check the URL is exactly one of the two above.
+
+### Other clients
+
+Any MCP client that supports remote Streamable HTTP or SSE servers can use the URLs above directly. Clients that only launch local stdio servers can bridge with a tool such as [`mcp-remote`](https://github.com/geelen/mcp-remote).
 
 ### Self-hosting
 
@@ -280,6 +282,8 @@ Add to your `claude_desktop_config.json`:
 go build -o sl-mcp-server
 PORT=5000 ./sl-mcp-server
 ```
+
+The process logs one line per HTTP request (method, path, status, duration, user agent — never the query string) and one per tool call with its outcome (`outcome=ok`, `outcome=structured_error code=…` for pickers and validation errors returned as text, or `error=true code=… status=…`). Coordinates are redacted.
 
 ### Caching, retries and upstream errors
 
@@ -293,7 +297,7 @@ Slowly-changing upstream payloads are cached in memory per process: the `/v1/sit
 go test -race ./...
 go vet ./...
 gofmt -s -w .
-gocyclo -over 10 .
+gocyclo -over 10 -ignore '_test\.go$' .   # enforced in CI; test functions are exempt
 ```
 
 See [`CHANGELOG.md`](CHANGELOG.md) for release notes.
