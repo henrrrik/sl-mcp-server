@@ -20,10 +20,11 @@ jobs:
 
       - run: go vet ./...
 
-      # Cyclomatic complexity gate, matching the pre-commit rule in CLAUDE.md.
-      # Test functions are exempt; the limit is for production code.
-      - run: go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
-      - run: gocyclo -over 10 -ignore '_test\.go$' .
+      # golangci-lint: config in .golangci.yml. Includes the gocyclo gate
+      # (complexity > 10, test functions exempt) from CLAUDE.md.
+      - uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.13
 
   test:
     runs-on: ubuntu-latest

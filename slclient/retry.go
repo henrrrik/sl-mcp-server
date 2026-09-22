@@ -48,7 +48,7 @@ func (c *retryingClient) Do(req *http.Request) (*http.Response, error) {
 				}
 				wait = ra
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		if err := sleepCtx(req.Context(), wait); err != nil {
 			return nil, err

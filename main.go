@@ -82,7 +82,7 @@ func newHTTPServer(addr string, mcpServer *server.MCPServer, logger *log.Logger)
 
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"name":"sl-mcp-server","sse_endpoint":"/sse","mcp_endpoint":"/mcp"}`))
+		_, _ = w.Write([]byte(`{"name":"sl-mcp-server","sse_endpoint":"/sse","mcp_endpoint":"/mcp"}`))
 	})
 	// Tolerate a trailing slash and HEAD probes: connector UIs normalise
 	// URLs differently, and a 404 on the first request is easily misread
