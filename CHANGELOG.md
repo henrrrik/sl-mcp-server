@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### upstream errors (all tools)
+
+- Non-2xx upstream replies are reported as a structured
+  `upstream_http_error` with the status, the first 300 characters of the
+  body and any `Retry-After`. Previously the body was discarded and the
+  tool said only `SL API returned HTTP 400`, although SL's 400s explain
+  exactly what was wrong (e.g. the `itd_date` pattern).
+- Requests that never get a reply are `upstream_unreachable` or
+  `upstream_timeout` instead of a bare Go error string.
+- GET requests that fail with a transport error, `429` or `5xx` are
+  retried once after 250 ms (or a `Retry-After` of up to 2 s), below the
+  response cache so coalesced callers share the retry.
+
 ### argument handling (all tools)
 
 - Site ids for `departures.site_id`, `deviations.site` and

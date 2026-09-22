@@ -2022,3 +2022,60 @@ func TestDeparturesTool_LimitAcceptsNumericString(t *testing.T) {
 		t.Errorf("limit=\"5\" should truncate to 5, got %d", len(out.Departures))
 	}
 }
+
+// errDoer fails every request with err.
+type errDoer struct{ err error }
+
+func (d errDoer) Do(*http.Request) (*http.Response, error) { return nil, d.err }
+
+func decodeErrResult(t *testing.T, r *mcp.CallToolResult) map[string]any {
+	t.Helper()
+	if r == nil || !r.IsError {
+		t.Fatalf("expected an error result, got %+v", r)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(errResultText(r)), &payload); err != nil {
+		t.Fatalf("error result is not structured JSON: %q", errResultText(r))
+	}
+	return payload
+}
+
+// A non-2xx upstream reply must carry its status and the start of its
+// body: SL's 400s explain exactly what was wrong (e.g. the itd_date
+// pattern), and 'SL API returned HTTP 400' threw that away.
+func TestFetchJSONRaw_NonSuccessIsStructuredWithBodySnippet(t *testing.T) {
+	mock := newMockDoerWithStatus(`{"error_message":"itd_date must match yyyyMMdd"}`, 400)
+	_, errResult := fetchJSONRaw(context.Background(), mock, "https://x.test/v2/trips")
+	p := decodeErrResult(t, errResult)
+	if p["error"] != "upstream_http_error" || p["status"] != float64(400) {
+		t.Errorf("expected upstream_http_error/400, got %v", p)
+	}
+	if body, _ := p["body"].(string); !strings.Contains(body, "itd_date must match") {
+		t.Errorf("expected the upstream body snippet, got %v", p["body"])
+	}
+}
+
+func TestFetchJSONRaw_RetryAfterIsSurfaced(t *testing.T) {
+	mock := &mockHTTPDoer{status: 503, body: "busy", header: http.Header{"Retry-After": {"30"}}}
+	_, errResult := fetchJSONRaw(context.Background(), mock, "https://x.test/v1/sites")
+	p := decodeErrResult(t, errResult)
+	if p["retry_after"] != "30" {
+		t.Errorf("expected retry_after=30, got %v", p)
+	}
+}
+
+func TestFetchJSONRaw_TransportErrorIsStructured(t *testing.T) {
+	_, errResult := fetchJSONRaw(context.Background(), errDoer{err: errors.New("dial tcp: connection refused")}, "https://x.test/v1/sites")
+	p := decodeErrResult(t, errResult)
+	if p["error"] != "upstream_unreachable" || !strings.Contains(p["detail"].(string), "connection refused") {
+		t.Errorf("expected upstream_unreachable with detail, got %v", p)
+	}
+}
+
+func TestFetchJSONRaw_DeadlineIsUpstreamTimeout(t *testing.T) {
+	_, errResult := fetchJSONRaw(context.Background(), errDoer{err: fmt.Errorf("Get %q: %w", "https://x.test", context.DeadlineExceeded)}, "https://x.test/v1/sites")
+	p := decodeErrResult(t, errResult)
+	if p["error"] != "upstream_timeout" {
+		t.Errorf("expected upstream_timeout, got %v", p)
+	}
+}

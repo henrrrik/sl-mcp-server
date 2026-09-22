@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -56,12 +57,12 @@ func fetchJSONRaw(ctx context.Context, client slclient.HTTPDoer, rawURL string) 
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, mcp.NewToolResultError(err.Error())
+		return nil, mcp.NewToolResultError(transportErrorJSON(rawURL, err))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, mcp.NewToolResultError(fmt.Sprintf("SL API returned HTTP %d", resp.StatusCode))
+		return nil, mcp.NewToolResultError(upstreamHTTPErrorJSON(rawURL, resp))
 	}
 
 	body, tooLarge, err := readBodyLimited(resp.Body, maxResponseSize)
@@ -73,6 +74,57 @@ func fetchJSONRaw(ctx context.Context, client slclient.HTTPDoer, rawURL string) 
 	}
 
 	return body, nil
+}
+
+// Upstream error codes. Machine-readable so callers (and the request log)
+// can tell an SL outage from bad input without parsing prose.
+const (
+	errUpstreamHTTP        = "upstream_http_error"
+	errUpstreamUnreachable = "upstream_unreachable"
+	errUpstreamTimeout     = "upstream_timeout"
+)
+
+// upstreamErrorBodySnippet bounds how much of an error body is echoed.
+// SL's 4xx bodies are short JSON explanations; 5xx bodies can be HTML.
+const upstreamErrorBodySnippet = 300
+
+// upstreamHTTPErrorJSON describes a non-2xx upstream reply: status, the
+// start of the body (SL's 400s say exactly what was wrong), and any
+// Retry-After so a caller can back off sensibly.
+func upstreamHTTPErrorJSON(rawURL string, resp *http.Response) string {
+	payload := map[string]any{
+		"error":  errUpstreamHTTP,
+		"status": resp.StatusCode,
+		"url":    rawURL,
+	}
+	if ra := resp.Header.Get("Retry-After"); ra != "" {
+		payload["retry_after"] = ra
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if snippet := strings.TrimSpace(string(body)); snippet != "" {
+		if len(snippet) > upstreamErrorBodySnippet {
+			snippet = snippet[:upstreamErrorBodySnippet] + "…"
+		}
+		payload["body"] = snippet
+	}
+	b, _ := json.Marshal(payload)
+	return string(b)
+}
+
+// transportErrorJSON describes a request that never got an HTTP reply:
+// a timeout (the per-call deadline or the client's own) or a connection
+// failure.
+func transportErrorJSON(rawURL string, err error) string {
+	code := errUpstreamUnreachable
+	if errors.Is(err, context.DeadlineExceeded) {
+		code = errUpstreamTimeout
+	}
+	b, _ := json.Marshal(map[string]any{
+		"error":  code,
+		"url":    rawURL,
+		"detail": err.Error(),
+	})
+	return string(b)
 }
 
 // prefetch starts fetching rawURL immediately and returns a func that

@@ -23,6 +23,7 @@ import (
 type mockHTTPDoer struct {
 	status int
 	body   string
+	header http.Header // optional response headers
 
 	mu      sync.Mutex
 	lastReq *http.Request
@@ -34,6 +35,7 @@ func (m *mockHTTPDoer) Do(req *http.Request) (*http.Response, error) {
 	m.mu.Unlock()
 	return &http.Response{
 		StatusCode: m.status,
+		Header:     m.header,
 		Body:       io.NopCloser(strings.NewReader(m.body)),
 	}, nil
 }
