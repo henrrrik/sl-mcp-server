@@ -2900,3 +2900,46 @@ func TestTripsTool_DeviationsFetchFailureAddsWarning(t *testing.T) {
 		t.Errorf("expected a deviations_unavailable warning naming the upstream error, got %+v", out.Warnings)
 	}
 }
+
+// A stop-finder body with no locations and a BROKER error must surface the
+// error; it previously collapsed to [] (stop_finder) or {} (resolve).
+const stopFinderBrokerErrorBody = `{"locations":[],"systemMessages":[{"type":"error","module":"BROKER","code":-4030,"text":"invalid parameter name_sf"}]}`
+
+func TestStopFinderTool_SurfacesBrokerError(t *testing.T) {
+	_, handler := StopFinderTool(newMockDoer(stopFinderBrokerErrorBody))
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"name": "x"}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+	if !result.IsError || !strings.Contains(text, `"error":"stop_finder_error"`) || !strings.Contains(text, "invalid parameter") {
+		t.Errorf("expected a stop_finder_error carrying the broker message, got %s", text)
+	}
+}
+
+func TestResolveTool_SurfacesBrokerError(t *testing.T) {
+	_, handler := ResolveTool(newMockDoer(stopFinderBrokerErrorBody))
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": "x"}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+	if !result.IsError || !strings.Contains(text, `"error":"stop_finder_error"`) {
+		t.Errorf("expected a stop_finder_error, got %s", text)
+	}
+}
+
+// No locations and no error message is a legitimate empty result.
+func TestStopFinderTool_EmptyWithoutErrorIsEmptyArray(t *testing.T) {
+	_, handler := StopFinderTool(newMockDoer(`{"locations":[],"systemMessages":[]}`))
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"name": "zzz"}
+	result, _ := handler(context.Background(), req)
+	if result.IsError || strings.TrimSpace(result.Content[0].(mcp.TextContent).Text) != "[]" {
+		t.Errorf("expected [], got %s", result.Content[0].(mcp.TextContent).Text)
+	}
+}
+
+func TestMapMode_SwedishFerry(t *testing.T) {
+	if got := mapMode("Färja"); got != "ship" {
+		t.Errorf(`mapMode("Färja") = %q, want "ship"`, got)
+	}
+}

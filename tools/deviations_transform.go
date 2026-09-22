@@ -24,8 +24,7 @@ import (
 //	  categories:        []string,   // flat "GROUP:NAME" strings if upstream sent any
 //	}
 //
-// Malformed entries pass through verbatim so one bad row doesn't drop
-// every deviation in the batch.
+// Malformed entries are dropped so one bad row can't break the batch.
 //
 // filters is applied in-process after decode. Use this for the
 // accessibility-aware facility filter and for client-side transport_mode

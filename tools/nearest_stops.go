@@ -39,6 +39,9 @@ func NearestStopsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFun
 		if latErr != nil || lonErr != nil {
 			return mcp.NewToolResultError("lat and lon are required numeric arguments"), nil
 		}
+		if errResult := validateCoordinates(lat, lon); errResult != nil {
+			return errResult, nil
+		}
 
 		radiusM := request.GetFloat("radius_m", defaultNearestRadiusM)
 		if radiusM <= 0 {
@@ -146,4 +149,37 @@ func haversineM(lat1, lon1, lat2, lon2 float64) float64 {
 			math.Sin(dLon/2)*math.Sin(dLon/2)
 	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 	return earthRadiusM * c
+}
+
+// SL's service area, with generous margin: Stockholm County spans roughly
+// lat 58.7–60.3 and lon 17.2–19.4. Anything outside can't have an SL stop
+// within a sane radius, so the search would always be empty.
+const (
+	slAreaMinLat, slAreaMaxLat = 58.0, 61.0
+	slAreaMinLon, slAreaMaxLon = 16.0, 20.5
+)
+
+// validateCoordinates rejects coordinates that can't possibly match: values
+// outside WGS84 ranges, and values outside SL's service area. The common
+// mistake is swapped lat/lon — Stockholm's (59.3, 18.1) swapped is still a
+// valid WGS84 pair, off the coast of Somalia — so the hint says so when
+// swapping would land inside the service area.
+func validateCoordinates(lat, lon float64) *mcp.CallToolResult {
+	inArea := func(la, lo float64) bool {
+		return la >= slAreaMinLat && la <= slAreaMaxLat && lo >= slAreaMinLon && lo <= slAreaMaxLon
+	}
+	if inArea(lat, lon) {
+		return nil
+	}
+	hint := "Coordinates are outside SL's service area (Stockholm region, roughly lat 58–61, lon 16–20.5, WGS84 decimal degrees)."
+	if inArea(lon, lat) {
+		hint = "lat and lon look swapped: Stockholm is roughly lat 59.3, lon 18.1 (lat first)."
+	}
+	b, _ := json.Marshal(map[string]any{
+		"error": "invalid_coordinates",
+		"lat":   lat,
+		"lon":   lon,
+		"hint":  hint,
+	})
+	return mcp.NewToolResultError(string(b))
 }

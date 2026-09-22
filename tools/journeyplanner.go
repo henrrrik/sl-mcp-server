@@ -52,6 +52,9 @@ func ResolveTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 			return errResult, nil
 		}
 
+		if errResult := stopFinderBrokerError(body); errResult != nil {
+			return errResult, nil
+		}
 		out, err := buildResolveResponse(body, query, stopOnly)
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to reshape resolve response: %v", err)), nil
@@ -90,6 +93,9 @@ func StopFinderTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 		u := slclient.BuildURL(journeyPlannerBase, "/v2/stop-finder", stopFinderParams(name))
 		body, errResult := fetchJSONRaw(ctx, client, u)
 		if errResult != nil {
+			return errResult, nil
+		}
+		if errResult := stopFinderBrokerError(body); errResult != nil {
 			return errResult, nil
 		}
 		trimmed, err := trimStopFinder(body, name)

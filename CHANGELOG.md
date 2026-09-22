@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### small fixes
+
+- `nearest_stops` rejects coordinates outside SL's service area (Stockholm
+  region, with margin) with `invalid_coordinates`, pointing out a swapped
+  lat/lon pair when that's what it looks like. A swapped Stockholm pair is
+  still valid WGS84, so the previous behaviour was an empty list from a
+  search off the coast of Somalia.
+- `stop_finder` and `resolve` surface a BROKER error from upstream as
+  `stop_finder_error` instead of collapsing to `[]` / `{}`; `trips`
+  ambiguity resolution does the same.
+- `sites` pages to 200 entries by default; `limit=0` returns the full
+  catalog. A no-argument call previously returned all ~6500 entries
+  (~1.3 MB) as one text result.
+- `trips` leg mode: the Swedish ferry product name is `Färja` (the
+  mapping had a `Ferja` typo, so ferries fell through to a lowercased raw
+  name).
+- Coordinates (`lat`, `lon`) are redacted in the request log.
+
 ### upstream errors (all tools)
 
 - Non-2xx upstream replies are reported as a structured

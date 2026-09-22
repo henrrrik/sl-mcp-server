@@ -2127,3 +2127,35 @@ func TestDeparturesTool_NoWarningsOnSuccess(t *testing.T) {
 		t.Errorf("no warnings expected on success")
 	}
 }
+
+func manySites(n int) string {
+	sites := make([]map[string]any, 0, n)
+	for i := 0; i < n; i++ {
+		sites = append(sites, map[string]any{"id": 1000 + i, "name": fmt.Sprintf("Site %d", i), "lat": 59.3, "lon": 18.0})
+	}
+	b, _ := json.Marshal(sites)
+	return string(b)
+}
+
+// A no-argument sites call must not hand the whole ~6500-entry catalog to
+// the LLM; it gets a default page, and limit=0 asks for everything.
+func TestSitesTool_DefaultLimitAndZeroIsUnlimited(t *testing.T) {
+	for _, tc := range []struct {
+		args map[string]any
+		want int
+	}{
+		{map[string]any{}, defaultSitesLimit},
+		{map[string]any{"limit": 0}, 250},
+		{map[string]any{"limit": 7}, 7},
+	} {
+		_, handler := SitesTool(newMockDoer(manySites(250)))
+		req := mcp.CallToolRequest{}
+		req.Params.Arguments = tc.args
+		result, _ := handler(context.Background(), req)
+		var out []any
+		_ = json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &out)
+		if len(out) != tc.want {
+			t.Errorf("args=%v: expected %d sites, got %d", tc.args, tc.want, len(out))
+		}
+	}
+}

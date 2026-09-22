@@ -242,7 +242,7 @@ func collectSiteIdentity(root map[string]any) siteIdentity {
 }
 
 // extractID pulls a numeric id out of a {"id": ...} object, accepting both
-// json.Number-decoded floats (the default) and already-int values.
+// float64 (encoding/json's default for numbers) and already-int values.
 func extractID(v any) int {
 	m, ok := v.(map[string]any)
 	if !ok {
