@@ -133,6 +133,17 @@
 
 ### departures
 
+- `stop_deviations` are now derived before the page-size `limit` is
+  applied. Previously the site identity (stop areas / lines) was collected
+  from the truncated page, so with the default `limit=20` a disruption on
+  a line whose next departure was row 21 silently vanished, and changing
+  `limit` changed which disruptions were shown.
+- When the site has no upcoming departures at all, upstream's own
+  site-scoped `stop_deviations` are returned instead of an always-empty
+  array (the site's stop areas can't be inferred without departures —
+  exactly the "stop closed" case where the notice matters most). Filters
+  that remove every departure still yield an empty intersection.
+
 - `line` filter is now a prefix match, case-insensitive. `"43"` matches
   both pendeltåg 43 and 43X; `"54"` matches the whole 54x bus family.
   Previous behavior was exact match, which required callers to know the
