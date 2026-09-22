@@ -2,9 +2,12 @@ package tools
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // SL's real site IDs fall in the range 102..9999. Anything accepted by
@@ -193,4 +196,34 @@ func formatSiteIDArgForError(v any) string {
 	default:
 		return fmt.Sprintf("%v", v)
 	}
+}
+
+// normalizeSiteIDArg reads a site-id argument that may arrive as a string
+// or a JSON number and normalizes it to the short form. present is false
+// when the key is absent (or an empty string — "not provided" rather than
+// "invalid"). errResult is set when the key is present but unusable:
+// non-integral, a number too large to have survived JSON's double
+// precision, or a shape/range normalizeSiteID rejects. Shared by every
+// tool that takes a site id so they can't disagree on the same input.
+func normalizeSiteIDArg(args map[string]any, key string) (short int, present bool, errResult *mcp.CallToolResult) {
+	raw, ok := args[key]
+	if !ok || raw == nil {
+		return 0, false, nil
+	}
+	if str, isStr := raw.(string); isStr && strings.TrimSpace(str) == "" {
+		return 0, false, nil
+	}
+	input := coerceSiteIDArg(raw)
+	if input == "" {
+		return 0, true, mcp.NewToolResultError((&siteIDError{Code: errInvalidSiteIDFormat, Input: formatSiteIDArgForError(raw)}).asJSON())
+	}
+	short, err := normalizeSiteID(input)
+	if err != nil {
+		var se *siteIDError
+		if errors.As(err, &se) {
+			return 0, true, mcp.NewToolResultError(se.asJSON())
+		}
+		return 0, true, mcp.NewToolResultError(err.Error())
+	}
+	return short, true, nil
 }

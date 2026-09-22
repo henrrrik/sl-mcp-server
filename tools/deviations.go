@@ -2,7 +2,6 @@ package tools
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -31,10 +30,12 @@ func DeviationsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 		if v := request.GetBool("future", false); v {
 			params.Set("future", "true")
 		}
-		if raw, present := request.GetArguments()["site"]; present {
-			if errResult := applyDeviationsSiteFilter(raw, params); errResult != nil {
-				return errResult, nil
-			}
+		site, present, errResult := normalizeSiteIDArg(request.GetArguments(), "site")
+		if errResult != nil {
+			return errResult, nil
+		}
+		if present {
+			params.Set("site", fmt.Sprintf("%d", site))
 		}
 		if v := request.GetInt("line", 0); v != 0 {
 			params.Set("line", fmt.Sprintf("%d", v))
@@ -72,28 +73,4 @@ func DeviationsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 	}
 
 	return tool, handler
-}
-
-// applyDeviationsSiteFilter normalizes a raw "site" argument (number or
-// string in any of the four recognized formats) to the short-form int and
-// sets it on params. Returns a structured siteID error result on invalid
-// input.
-func applyDeviationsSiteFilter(raw any, params url.Values) *mcp.CallToolResult {
-	input := coerceSiteIDArg(raw)
-	if input == "" {
-		return mcp.NewToolResultError((&siteIDError{
-			Code:  errInvalidSiteIDFormat,
-			Input: formatSiteIDArgForError(raw),
-		}).asJSON())
-	}
-	short, err := normalizeSiteID(input)
-	if err != nil {
-		var se *siteIDError
-		if errors.As(err, &se) {
-			return mcp.NewToolResultError(se.asJSON())
-		}
-		return mcp.NewToolResultError(err.Error())
-	}
-	params.Set("site", fmt.Sprintf("%d", short))
-	return nil
 }

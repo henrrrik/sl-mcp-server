@@ -2001,3 +2001,24 @@ func TestDeparturesTool_FilteredToNothingKeepsEmptyStopDeviations(t *testing.T) 
 		t.Errorf("filtered-to-nothing must not fall back to upstream's list, got %+v", out.StopDeviations)
 	}
 }
+
+// limit arrives as a JSON number from most clients but as a string from
+// some; both must work, as they already do for lines(limit=...).
+func TestDeparturesTool_LimitAcceptsNumericString(t *testing.T) {
+	b, _ := json.Marshal(map[string]any{"departures": departuresRows(30, 43), "stop_deviations": []any{}})
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/departures", body: string(b)},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
+	_, handler := DeparturesTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": "9001", "limit": "5"}
+	result, _ := handler(context.Background(), req)
+	var out struct {
+		Departures []any `json:"departures"`
+	}
+	_ = json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &out)
+	if len(out.Departures) != 5 {
+		t.Errorf("limit=\"5\" should truncate to 5, got %d", len(out.Departures))
+	}
+}

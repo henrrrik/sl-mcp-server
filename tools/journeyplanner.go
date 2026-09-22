@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -45,12 +44,7 @@ func ResolveTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 		if query == "" {
 			return mcp.NewToolResultError("query is required"), nil
 		}
-		stopOnly := true
-		if raw, present := request.GetArguments()["stop_only"]; present {
-			if b, ok := raw.(bool); ok {
-				stopOnly = b
-			}
-		}
+		stopOnly := request.GetBool("stop_only", true)
 
 		u := slclient.BuildURL(journeyPlannerBase, "/v2/stop-finder", stopFinderParams(query))
 		body, errResult := fetchJSONRaw(ctx, client, u)
@@ -116,7 +110,7 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 		mcp.WithString("origin_id", mcp.Description("Origin site id. Accepts the short form (e.g. \"9702\"), the 8-digit 18xx form, the 9-digit 3BA1CDEFG form, or the 16-digit GID. Skips fuzzy name resolution and prevents silent drift onto POIs/addresses. Pass as a string — 16-digit GIDs exceed JS Number.MAX_SAFE_INTEGER.")),
 		mcp.WithString("destination_id", mcp.Description("Destination site id. Same format rules as origin_id.")),
 		mcp.WithNumber("number_of_trips", mcp.Description("Number of trips to return (1-3, default 3)")),
-		mcp.WithString("time", mcp.Description("ISO 8601 departure/arrival time (e.g. 2026-04-22T09:00:00+02:00). Defaults to now.")),
+		mcp.WithString("time", mcp.Description("ISO 8601 departure/arrival time, e.g. 2026-04-22T09:00:00+02:00. A value without a zone offset (2026-04-22T09:00) is taken as Europe/Stockholm local time. Defaults to now.")),
 		mcp.WithString("time_mode", mcp.Description("'depart' or 'arrive' (default 'depart'). Only meaningful when 'time' is set.")),
 		mcp.WithBoolean("verbose", mcp.Description("Return the raw upstream response including coords, stopSequence, and footpath details, with the resolved block and any warnings injected at top level. The POI-drift and ambiguity guards still apply. Per-leg deviation enrichment is only available on the trimmed shape. Default false.")),
 		mcp.WithBoolean("skip_deviations", mcp.Description("Skip the second /v1/messages call that attaches active deviations to each transit leg. Only meaningful when verbose=false. Default false.")),
@@ -159,11 +153,11 @@ func TripsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc) {
 // buildTripsParams validates the origin/destination inputs and translates
 // the public arguments into the upstream's EFA query parameters.
 func buildTripsParams(request mcp.CallToolRequest, origin, destination string) (url.Values, *mcp.CallToolResult) {
-	originParam, errResult := resolveTripSideParam("origin", origin, coerceSiteIDArg(request.GetArguments()["origin_id"]))
+	originParam, errResult := resolveTripSideParam(request, "origin", origin)
 	if errResult != nil {
 		return nil, errResult
 	}
-	destParam, errResult := resolveTripSideParam("destination", destination, coerceSiteIDArg(request.GetArguments()["destination_id"]))
+	destParam, errResult := resolveTripSideParam(request, "destination", destination)
 	if errResult != nil {
 		return nil, errResult
 	}
@@ -231,29 +225,27 @@ func trimmedTripsResult(body []byte, warnings []tripWarning, messages func() ([]
 	return mcp.NewToolResultText(string(out))
 }
 
-// resolveTripSideParam enforces exactly-one-of (name, id) and returns the
-// value to feed into the upstream's name_origin / name_destination field.
-// Name is passed verbatim (upstream fuzzy-matches). IDs are normalized to
-// the 16-digit GID form the upstream also accepts.
-func resolveTripSideParam(side, name, idArg string) (string, *mcp.CallToolResult) {
-	if name == "" && idArg == "" {
+// resolveTripSideParam enforces exactly-one-of (name, id) for one side and
+// returns the value to feed into the upstream's name_origin /
+// name_destination field. Name is passed verbatim (upstream fuzzy-matches).
+// IDs are normalized to the 16-digit GID form the upstream also accepts. A
+// present-but-invalid id is an error in its own right — it must never fall
+// through to "absent" and let a by-name plan proceed.
+func resolveTripSideParam(request mcp.CallToolRequest, side, name string) (string, *mcp.CallToolResult) {
+	short, hasID, errResult := normalizeSiteIDArg(request.GetArguments(), side+"_id")
+	if errResult != nil {
+		return "", errResult
+	}
+	switch {
+	case name == "" && !hasID:
 		return "", mcp.NewToolResultError(fmt.Sprintf("exactly one of %q or %q_id must be set", side, side))
-	}
-	if name != "" && idArg != "" {
+	case name != "" && hasID:
 		return "", mcp.NewToolResultError(fmt.Sprintf("%q and %q_id are mutually exclusive", side, side))
-	}
-	if idArg == "" {
+	case hasID:
+		return siteIDToGID(short), nil
+	default:
 		return name, nil
 	}
-	gid, err := normalizeToGID(idArg)
-	if err != nil {
-		var se *siteIDError
-		if errors.As(err, &se) {
-			return "", mcp.NewToolResultError(se.asJSON())
-		}
-		return "", mcp.NewToolResultError(err.Error())
-	}
-	return gid, nil
 }
 
 // enrichWithDeviations waits for the prefetched /v1/messages snapshot and
@@ -636,16 +628,11 @@ func applyTripTime(request mcp.CallToolRequest, params url.Values) *mcp.CallTool
 		return nil
 	}
 
-	t, err := time.Parse(time.RFC3339, timeStr)
+	t, err := parseTripTime(timeStr)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("invalid time %q: %v", timeStr, err))
 	}
-
-	loc, err := time.LoadLocation(stockholmTZ)
-	if err != nil {
-		return mcp.NewToolResultError(fmt.Sprintf("failed to load %s timezone: %v", stockholmTZ, err))
-	}
-	local := t.In(loc)
+	local := t.In(stockholmLocation)
 
 	if modeStr == "" {
 		modeStr = "depart"
@@ -664,4 +651,33 @@ func applyTripTime(request mcp.CallToolRequest, params url.Values) *mcp.CallTool
 	params.Set("itd_time", local.Format("1504"))
 	params.Set("itd_trip_date_time_dep_arr", depArr)
 	return nil
+}
+
+// tripTimeLayouts are accepted for the trips `time` argument, in order.
+// Layouts without a zone offset are interpreted as Europe/Stockholm so
+// callers don't have to know the current DST offset.
+var tripTimeLayouts = []string{
+	time.RFC3339,
+	"2006-01-02T15:04Z07:00",
+	"2006-01-02T15:04:05",
+	"2006-01-02T15:04",
+	"2006-01-02 15:04:05",
+	"2006-01-02 15:04",
+}
+
+// parseTripTime parses an ISO 8601-style timestamp, treating naive
+// (offset-less) values as Europe/Stockholm local time.
+func parseTripTime(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	var firstErr error
+	for _, layout := range tripTimeLayouts {
+		t, err := time.ParseInLocation(layout, s, stockholmLocation)
+		if err == nil {
+			return t, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return time.Time{}, firstErr
 }

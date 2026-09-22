@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -163,36 +162,21 @@ func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		raw, present := request.GetArguments()["site_id"]
+		siteID, present, errResult := normalizeSiteIDArg(request.GetArguments(), "site_id")
+		if errResult != nil {
+			return errResult, nil
+		}
 		if !present {
 			return mcp.NewToolResultError("site_id is required"), nil
-		}
-		input := coerceSiteIDArg(raw)
-		if input == "" {
-			return mcp.NewToolResultError((&siteIDError{Code: errInvalidSiteIDFormat, Input: formatSiteIDArgForError(raw)}).asJSON()), nil
-		}
-		siteID, err := normalizeSiteID(input)
-		if err != nil {
-			var se *siteIDError
-			if errors.As(err, &se) {
-				return mcp.NewToolResultError(se.asJSON()), nil
-			}
-			return mcp.NewToolResultError(err.Error()), nil
 		}
 
 		// Default limit caps a busy-terminal response at a readable page
 		// size. Callers who need the full upstream set pass limit=0.
-		limit := defaultDeparturesLimit
-		if raw, present := request.GetArguments()["limit"]; present {
-			if n, ok := raw.(float64); ok {
-				limit = int(n)
-			}
-		}
 		filters := departuresFilters{
 			transportMode: request.GetString("transport_mode", ""),
 			line:          request.GetString("line", ""),
 			directionCode: request.GetInt("direction_code", 0),
-			limit:         limit,
+			limit:         request.GetInt("limit", defaultDeparturesLimit),
 		}
 
 		params := url.Values{}

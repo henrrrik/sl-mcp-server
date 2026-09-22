@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### argument handling (all tools)
+
+- Site ids for `departures.site_id`, `deviations.site` and
+  `trips.origin_id` / `destination_id` go through one shared parser. A
+  present-but-unusable value — e.g. a 16-digit GID passed as a JSON number,
+  or `9702.5` — is now `invalid_site_id_format` everywhere; `trips`
+  previously treated it as absent, which produced a misleading "exactly
+  one of origin / origin_id" error, or silently planned by name when
+  `origin` was also set (bypassing the mutual-exclusion rule).
+- `departures.limit`, `resolve.stop_only` and `nearest_stops.lat` / `lon`
+  accept their string forms, as the other tools' parameters already did.
+- `nearest_stops.limit=0` now means unlimited (within `radius_m`), as
+  `limit=0` does for `sites`, `lines`, `stop_points` and `departures`;
+  it previously fell back to the default of 5.
+- `trips.time` accepts values without a zone offset (`2026-04-22T09:00`
+  or with seconds) as Europe/Stockholm local time, so callers don't need
+  to know the current DST offset. The cached location is used instead of
+  loading the zone on every call.
+
 ### deviations
 
 - `verbose=true` now applies the same in-process `transport_mode` and
