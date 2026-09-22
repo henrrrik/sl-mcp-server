@@ -1895,3 +1895,109 @@ func TestDeparturesTool_FetchesMessagesConcurrently(t *testing.T) {
 		t.Fatalf("expected success, got %s", errResultText(result))
 	}
 }
+
+// departuresRows builds n departures on the given line, all at stop_area 5310.
+func departuresRows(n, lineID int) []any {
+	rows := make([]any, 0, n)
+	for i := 0; i < n; i++ {
+		rows = append(rows, map[string]any{
+			"destination":    "X",
+			"direction_code": float64(1),
+			"stop_area":      map[string]any{"id": 5310},
+			"line":           map[string]any{"id": lineID, "designation": fmt.Sprint(lineID), "transport_mode": "TRAIN"},
+		})
+	}
+	return rows
+}
+
+// stop_deviations must be judged against every departure that passes the
+// filters, not just the page that survives `limit`. With 20 line-43 rows
+// ahead of 5 line-40 rows, the default limit=20 previously hid line 40 from
+// the site identity and dropped its disruption.
+func TestDeparturesTool_StopDeviationsJudgedBeforeLimit(t *testing.T) {
+	deps := append(departuresRows(20, 43), departuresRows(5, 40)...)
+	b, _ := json.Marshal(map[string]any{"departures": deps, "stop_deviations": []any{}})
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/departures", body: string(b)},
+		{pathContains: "/v1/messages", body: messagesFixture(msgSpec{CaseID: 7001, LineIDs: []int{40}, Header: "Line 40 disrupted"})},
+	}}
+	_, handler := DeparturesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": "9001"}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		Departures     []any `json:"departures"`
+		StopDeviations []struct {
+			ID int `json:"id"`
+		} `json:"stop_deviations"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(out.Departures) != 20 {
+		t.Errorf("limit should still truncate the page to 20, got %d", len(out.Departures))
+	}
+	if len(out.StopDeviations) != 1 || out.StopDeviations[0].ID != 7001 {
+		t.Errorf("line-40 disruption must survive the page-size limit, got %+v", out.StopDeviations)
+	}
+}
+
+// With no upcoming departures at all the site's stop areas and lines can't
+// be inferred, so nothing could intersect; upstream's own site-scoped list
+// is the best available answer instead of an always-empty array.
+func TestDeparturesTool_NoDeparturesFallsBackToUpstreamStopDeviations(t *testing.T) {
+	body := `{"departures":[],"stop_deviations":[{"id":4242,"message":"Hållplatsen är avstängd","scope":{"stop_areas":[{"id":9001,"name":"Slussen"}]}}]}`
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/departures", body: body},
+		{pathContains: "/v1/messages", body: messagesFixture(msgSpec{CaseID: 4242, StopAreaIDs: []int{9001}, Header: "closed"})},
+	}}
+	_, handler := DeparturesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": "9001"}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		StopDeviations []struct {
+			ID int `json:"id"`
+		} `json:"stop_deviations"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(out.StopDeviations) != 1 || out.StopDeviations[0].ID != 4242 {
+		t.Errorf("expected upstream's stop_deviations when there are no departures, got %+v", out.StopDeviations)
+	}
+}
+
+// But when client-side filters (not the absence of departures) empty the
+// list, the intersection stays empty — a line=40 query must not carry a
+// line-43 notice just because no line-40 departures were upcoming.
+func TestDeparturesTool_FilteredToNothingKeepsEmptyStopDeviations(t *testing.T) {
+	b, _ := json.Marshal(map[string]any{
+		"departures":      departuresRows(3, 43),
+		"stop_deviations": []any{map[string]any{"id": 4343, "scope": map[string]any{"lines": []any{map[string]any{"id": 43}}}}},
+	})
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/departures", body: string(b)},
+		{pathContains: "/v1/messages", body: messagesFixture(msgSpec{CaseID: 4343, LineIDs: []int{43}})},
+	}}
+	_, handler := DeparturesTool(mock)
+
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": "9001", "line": "40"}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+
+	var out struct {
+		StopDeviations []any `json:"stop_deviations"`
+	}
+	_ = json.Unmarshal([]byte(text), &out)
+	if len(out.StopDeviations) != 0 {
+		t.Errorf("filtered-to-nothing must not fall back to upstream's list, got %+v", out.StopDeviations)
+	}
+}

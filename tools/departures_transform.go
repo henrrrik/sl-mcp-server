@@ -14,7 +14,7 @@ type departuresFilters struct {
 	transportMode string // lowercased: matches line.transport_mode case-insensitively
 	line          string // lowercased: exact match on line.designation
 	directionCode int    // 0 = all, 1 / 2 = the upstream's direction codes
-	limit         int    // 0 = no truncation
+	limit         int    // 0 = no truncation; applied after stop_deviations are derived
 }
 
 // trimDepartures reshapes a /v1/sites/{id}/departures response for a specific
@@ -56,27 +56,21 @@ func trimDepartures(depBody, msgsBody []byte, filters departuresFilters, verbose
 		return nil, errors.New("upstream departures body was null")
 	}
 
-	if deps, ok := root["departures"].([]any); ok {
-		root["departures"] = applyDeparturesFilters(deps, filters)
+	all, hasDeps := root["departures"].([]any)
+	filtered := filterDepartures(all, filters)
+	if hasDeps {
+		root["departures"] = filtered
 	}
 
-	// Re-derive the site identity AFTER filtering so stop_deviations reflect
-	// only the lines / stop_areas that survive. This prevents a line-43
-	// deviation from appearing on a "line=40" filtered response.
+	// Derive the site identity AFTER filtering (so a line=40 query doesn't
+	// carry a line-43 notice) but BEFORE the page-size limit, so which
+	// disruptions are shown never depends on how many rows fit on a page.
 	site := collectSiteIdentity(root)
+	root["stop_deviations"] = deriveStopDeviations(root, msgsBody, site, len(all) == 0)
 
-	var stopDeviations []any
-	if msgsBody != nil {
-		if rederived, err := filterMessagesForSite(msgsBody, site, time.Now()); err == nil {
-			stopDeviations = rederived
-		}
+	if hasDeps {
+		root["departures"] = truncateDepartures(filtered, filters.limit)
 	}
-	if stopDeviations == nil {
-		stopDeviations = filterUpstreamStopDeviations(root, site)
-	}
-
-	stripStopDeviationNoise(stopDeviations)
-	root["stop_deviations"] = stopDeviations
 
 	if !verbose {
 		if deps, ok := root["departures"].([]any); ok {
@@ -86,12 +80,43 @@ func trimDepartures(depBody, msgsBody []byte, filters departuresFilters, verbose
 	return json.Marshal(root)
 }
 
-// applyDeparturesFilters keeps only the departures that match every active
-// filter. Malformed rows pass through unchanged so one bad upstream row
-// doesn't sneak past (conservative — we'd rather show a noisy row than
-// silently drop a departure).
-func applyDeparturesFilters(deps []any, f departuresFilters) []any {
-	if f.transportMode == "" && f.line == "" && f.directionCode == 0 && f.limit <= 0 {
+// deriveStopDeviations rebuilds stop_deviations for the site: from the
+// /v1/messages snapshot when available, otherwise from upstream's own list
+// filtered by the same intersection rule.
+//
+// noUpcoming is the case where upstream returned no departures at all (as
+// opposed to filters removing them). The site's stop areas and lines can't
+// be inferred then, so nothing could intersect and the result would always
+// be empty — exactly when a "stop closed" notice matters most. Upstream's
+// own list is site-scoped per SL, so it is returned as the best available
+// answer.
+func deriveStopDeviations(root map[string]any, msgsBody []byte, site siteIdentity, noUpcoming bool) []any {
+	var stopDeviations []any
+	switch {
+	case noUpcoming:
+		stopDeviations, _ = root["stop_deviations"].([]any)
+		if stopDeviations == nil {
+			stopDeviations = []any{}
+		}
+	case msgsBody != nil:
+		if rederived, err := filterMessagesForSite(msgsBody, site, time.Now()); err == nil {
+			stopDeviations = rederived
+		}
+	}
+	if stopDeviations == nil {
+		stopDeviations = filterUpstreamStopDeviations(root, site)
+	}
+	stripStopDeviationNoise(stopDeviations)
+	return stopDeviations
+}
+
+// filterDepartures keeps only the departures that match every active
+// filter (transport_mode / line / direction_code; limit is applied
+// separately by truncateDepartures). Malformed rows pass through unchanged
+// so one bad upstream row doesn't sneak past (conservative — we'd rather
+// show a noisy row than silently drop a departure).
+func filterDepartures(deps []any, f departuresFilters) []any {
+	if f.transportMode == "" && f.line == "" && f.directionCode == 0 {
 		return deps
 	}
 	out := make([]any, 0, len(deps))
@@ -105,11 +130,16 @@ func applyDeparturesFilters(deps []any, f departuresFilters) []any {
 			continue
 		}
 		out = append(out, dep)
-		if f.limit > 0 && len(out) >= f.limit {
-			break
-		}
 	}
 	return out
+}
+
+// truncateDepartures applies the page-size limit; 0 means no truncation.
+func truncateDepartures(deps []any, limit int) []any {
+	if limit > 0 && len(deps) > limit {
+		return deps[:limit]
+	}
+	return deps
 }
 
 func departureMatches(dep map[string]any, f departuresFilters) bool {

@@ -124,7 +124,7 @@ Real-time departures from a transit site, with in-process filtering and a slim d
 
 Slim mode drops per-row redundancy (every row belongs to the queried site) and slims `line` to `{designation, transport_mode, group_of_lines}`. `stop_point` is reduced to just its `designation` (the track/platform number).
 
-`stop_deviations` are rebuilt from `/v1/messages` and filtered to scopes that touch this site's stop_areas, stop_points, or lines — they are re-derived **after** client-side filtering, so a `line="40"` query doesn't carry a deviation scoped to line 43. If `/v1/messages` is unreachable the upstream's raw `stop_deviations` are filtered with the same intersection rule as a fallback.
+`stop_deviations` are rebuilt from `/v1/messages` and filtered to scopes that touch this site's stop_areas, stop_points, or lines — they are re-derived **after** client-side filtering (so a `line="40"` query doesn't carry a deviation scoped to line 43) but **before** the `limit` truncation, so the page size never changes which disruptions are shown. If `/v1/messages` is unreachable the upstream's raw `stop_deviations` are filtered with the same intersection rule as a fallback. When the site has no upcoming departures at all (overnight, or a stop closed by the very deviation), its stop areas can't be inferred, so upstream's own site-scoped `stop_deviations` are returned as-is.
 
 ### `deviations`
 
