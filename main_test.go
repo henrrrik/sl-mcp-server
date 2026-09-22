@@ -204,3 +204,43 @@ func TestHTTPServer_AccessLog(t *testing.T) {
 		t.Errorf("access log must not contain the query string, got: %s", line)
 	}
 }
+
+// Claude's connector client speaks Streamable HTTP first: it POSTs
+// initialize to whatever URL it was given. A connector configured with the
+// older /sse URL therefore hit a 405, which the client misread as "needs
+// sign-in" and failed at OAuth registration. An SSE-transport client never
+// POSTs to /sse (it posts to /message), so a POST there is unambiguously a
+// Streamable HTTP client and is served as one.
+func TestStreamableHTTP_PostToSSEPathIsServed(t *testing.T) {
+	base, shutdown := startTestServer(t)
+	defer shutdown(context.Background())
+	for _, path := range []string{"/sse", "/sse/"} {
+		resp := postMCP(t, base+path)
+		var out struct {
+			Result struct {
+				ServerInfo struct {
+					Name string `json:"name"`
+				} `json:"serverInfo"`
+			} `json:"result"`
+		}
+		err := json.NewDecoder(resp.Body).Decode(&out)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || err != nil || out.Result.ServerInfo.Name != "sl-mcp-server" {
+			t.Errorf("POST %s initialize: status %d err %v result %+v", path, resp.StatusCode, err, out)
+		}
+	}
+}
+
+// GET /sse must remain the SSE transport.
+func TestSSE_GetStillOpensStream(t *testing.T) {
+	base, shutdown := startTestServer(t)
+	defer shutdown(context.Background())
+	resp, err := http.Get(base + "/sse")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+		t.Errorf("GET /sse should open an event stream, got %d %s", resp.StatusCode, ct)
+	}
+}

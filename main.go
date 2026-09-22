@@ -96,7 +96,20 @@ func newHTTPServer(addr string, mcpServer *server.MCPServer, logger *log.Logger)
 	})
 	mux.Handle("/mcp", mcp)
 	mux.Handle("/mcp/", mcp)
-	mux.Handle("/", sseServer)
+
+	// Clients that speak Streamable HTTP (Claude's connector client among
+	// them) POST initialize to whatever URL they were given — including the
+	// older /sse URL, where the SSE server answers 405 and the client then
+	// misreads that as "needs sign-in". An SSE-transport client never POSTs
+	// to /sse (it posts to /message), so a POST or HEAD there is served as
+	// Streamable HTTP; GET keeps opening the SSE stream.
+	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if (r.URL.Path == "/sse" || r.URL.Path == "/sse/") && r.Method != http.MethodGet {
+			mcp.ServeHTTP(w, r)
+			return
+		}
+		sseServer.ServeHTTP(w, r)
+	}))
 
 	return srv, sseServer.Shutdown
 }
