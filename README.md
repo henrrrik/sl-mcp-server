@@ -297,7 +297,7 @@ Slowly-changing upstream payloads are cached in memory per process: the `/v1/sit
 go test -race ./...
 go vet ./...
 gofmt -s -w .
-gocyclo -over 10 -ignore '_test\.go$' .   # enforced in CI; test functions are exempt
+golangci-lint run ./...   # config in .golangci.yml; enforced in CI
 ```
 
 See [`CHANGELOG.md`](CHANGELOG.md) for release notes.

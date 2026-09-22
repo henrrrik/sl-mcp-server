@@ -142,17 +142,6 @@ func siteIDTo180(short int) string {
 	return fmt.Sprintf("180%05d", short)
 }
 
-// normalizeToGID accepts any recognized site-id shape (short, 8-digit 18xx,
-// 9-digit 3BA1CDEFG, 16-digit GID) and returns the canonical 16-digit GID
-// string. Invalid input surfaces as a *siteIDError with the usual codes.
-func normalizeToGID(input string) (string, error) {
-	short, err := normalizeSiteID(input)
-	if err != nil {
-		return "", err
-	}
-	return siteIDToGID(short), nil
-}
-
 // coerceSiteIDArg normalizes a raw MCP argument into the string form that
 // normalizeSiteID expects. Accepts strings directly, and integers-as-numbers
 // (JSON numbers arrive as float64) when they fit safely in a JSON double.

@@ -1,0 +1,29 @@
+version: "2"
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - gocyclo
+    - misspell
+    - unconvert
+    - unparam
+    - nolintlint
+  settings:
+    gocyclo:
+      # Matches the pre-commit rule in CLAUDE.md.
+      min-complexity: 11
+    errcheck:
+      # Closing a response body in a defer is idiomatic; nothing useful can
+      # be done with that error.
+      exclude-functions:
+        - (io.ReadCloser).Close
+  exclusions:
+    rules:
+      # Test functions are exempt from the complexity limit.
+      - path: _test\.go
+        linters:
+          - gocyclo
+
+formatters:
+  enable:
+    - gofmt

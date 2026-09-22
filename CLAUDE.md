@@ -12,7 +12,7 @@ Hosted on Runway at https://sl-mcp-server.pqapp.dev
 - `go test -v -race ./...` — run tests (matches CI)
 - `gofmt -s -w .` — run before committing
 - `go vet ./...` — run before committing
-- `gocyclo -over 10 -ignore '_test\.go$' .` — run before committing (CI enforces it; test functions are exempt)
+- `golangci-lint run ./...` — run before committing (CI enforces it via `.golangci.yml`; includes the gocyclo limit of 10 for non-test code)
 
 ## Project Structure
 - `slclient/` — `HTTPDoer` interface wrapping `http.Client` for testability, plus URL builder
