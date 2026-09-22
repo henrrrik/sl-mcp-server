@@ -7,6 +7,11 @@
 - `/mcp/` (trailing slash) and `HEAD /mcp` are served instead of 404 —
   a 404 on a connector's first request is easily misread as "this server
   needs sign-in".
+- `POST /sse` is served as Streamable HTTP. Claude's connector client
+  POSTs `initialize` to the configured URL, so a connector set up with the
+  older `/sse` URL got a 405, treated it as "needs sign-in" and failed at
+  OAuth registration. An SSE-transport client never POSTs to `/sse`, so
+  the request is unambiguous; `GET /sse` still opens the SSE stream.
 - One access-log line per HTTP request (method, path, status, duration,
   user agent; never the query string, which carries the SSE session id),
   so connection problems can be diagnosed from the logs.

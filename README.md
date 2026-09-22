@@ -258,7 +258,7 @@ No API key required — SL's integration APIs are open.
 The hosted instance serves two transports:
 
 - **Streamable HTTP** (recommended) at `https://sl-mcp-server.pqapp.dev/mcp` — stateless, so it survives server restarts and works behind multiple replicas.
-- **SSE** at `https://sl-mcp-server.pqapp.dev/sse` — for clients that only speak the older transport. Sessions live in one process and are dropped on restart.
+- **SSE** at `https://sl-mcp-server.pqapp.dev/sse` — for clients that only speak the older transport. Sessions live in one process and are dropped on restart. A Streamable HTTP client that was configured with this URL (it `POST`s here instead of opening the stream) is served as Streamable HTTP, so existing connectors keep working.
 
 ### Claude Desktop
 
