@@ -230,3 +230,39 @@ func TestHaversineM(t *testing.T) {
 		t.Errorf("expected ≈%v m Stockholm→Oslo, got %v", expected, d)
 	}
 }
+
+// lat/lon must accept the same string forms as radius_m and limit do.
+func TestNearestStopsTool_AcceptsStringCoordinates(t *testing.T) {
+	_, handler := NearestStopsTool(newMockDoer(loadTestData(t, "sites.json")))
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"lat": "59.3186", "lon": "18.0716", "radius_m": "800"}
+	result, err := handler(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.IsError {
+		t.Fatalf("string coordinates should be accepted, got %s", result.Content[0].(mcp.TextContent).Text)
+	}
+	var out []any
+	_ = json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &out)
+	if len(out) == 0 {
+		t.Errorf("expected at least one stop near Slussen")
+	}
+}
+
+// limit=0 means unlimited, as it does for every other tool.
+func TestNearestStopsTool_LimitZeroIsUnlimited(t *testing.T) {
+	sitesJSON := loadTestData(t, "sites.json")
+	var all []any
+	_ = json.Unmarshal([]byte(sitesJSON), &all)
+
+	_, handler := NearestStopsTool(newMockDoer(sitesJSON))
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"lat": 59.33, "lon": 18.06, "radius_m": 1e7, "limit": 0}
+	result, _ := handler(context.Background(), req)
+	var out []any
+	_ = json.Unmarshal([]byte(result.Content[0].(mcp.TextContent).Text), &out)
+	if len(out) != len(all) {
+		t.Errorf("limit=0 with a planet-sized radius should return every site (%d), got %d", len(all), len(out))
+	}
+}

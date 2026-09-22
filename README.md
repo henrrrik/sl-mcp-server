@@ -32,7 +32,9 @@ SL hands out four id forms for the same stop; all are interchangeable at the ser
 - **9-digit 3BA1CDEFG form** — e.g. `300109702`. Documented by Trafiklab.
 - **16-digit GID** — e.g. `9091001000009702`. Returned by `stop_finder.id` and `resolve.best.gid_16`.
 
-Every tool that takes a site parameter (`departures.site_id`, `deviations.site`, `trips.origin_id` / `destination_id`) normalizes all four forms. Pass 16-digit GIDs as **strings** — they exceed JS `Number.MAX_SAFE_INTEGER` and lose precision if passed as numbers.
+Every tool that takes a site parameter (`departures.site_id`, `deviations.site`, `trips.origin_id` / `destination_id`) normalizes all four forms through the same parser, so the same input is accepted or rejected identically everywhere. Pass 16-digit GIDs as **strings** — they exceed JS `Number.MAX_SAFE_INTEGER` and lose precision if passed as numbers; a present-but-unusable id is reported as `invalid_site_id_format` rather than treated as absent.
+
+Numeric and boolean parameters on every tool also accept their string forms (`"5"`, `"false"`), and `limit=0` consistently means "no cap".
 
 ### `trips`
 
@@ -45,7 +47,7 @@ Plan a trip between two locations. Returns a trimmed, LLM-friendly summary by de
 | `destination` | string | Same rules as `origin`. |
 | `destination_id` | string | Same rules as `origin_id`. |
 | `number_of_trips` | number | 1–3, default 3. |
-| `time` | string | ISO 8601, e.g. `2026-04-22T09:00:00+02:00`. Defaults to now. |
+| `time` | string | ISO 8601, e.g. `2026-04-22T09:00:00+02:00`. A value without a zone offset (`2026-04-22T09:00`) is taken as Europe/Stockholm local time. Defaults to now. |
 | `time_mode` | `depart` \| `arrive` | Default `depart`. Only meaningful with `time`. |
 | `verbose` | bool | Default false. Return the raw upstream response (coords, stopSequence, footpath details) with `resolved` and `warnings` injected at top level. The guards below still apply; per-leg `deviations` are only attached on the trimmed shape. |
 | `skip_deviations` | bool | Default false. Skip the second `/v1/messages` call that attaches active deviations to each transit leg. Only meaningful when `verbose=false`. |
@@ -197,7 +199,7 @@ Find SL transit sites nearest to a lat/lon coordinate. Chains cleanly from an ex
 | `lat` | number | Required. WGS84 decimal degrees. |
 | `lon` | number | Required. WGS84 decimal degrees. |
 | `radius_m` | number | Maximum search distance in metres. Default 500. |
-| `limit` | number | Maximum results. Default 5. |
+| `limit` | number | Maximum results. Default 5; `0` returns every stop within `radius_m`. |
 
 **Response shape** (one entry per stop, sorted by distance ascending):
 

@@ -2789,3 +2789,59 @@ func TestStopFinderTool_SortsByMatchQuality(t *testing.T) {
 		}
 	}
 }
+
+// A present-but-invalid origin_id must be reported as invalid_site_id_format,
+// not silently treated as absent. A 16-digit GID passed as a JSON number is
+// exactly the mistake the parameter description warns about.
+func TestTripsTool_OriginIDAsNumberIsInvalidFormatNotAbsent(t *testing.T) {
+	_, handler := TripsTool(newMockDoer(loadTestData(t, "trips.json")))
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin_id": float64(9091001000009702), "destination": "T-Centralen", "skip_deviations": true}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, `"error":"invalid_site_id_format"`) {
+		t.Errorf("expected invalid_site_id_format, got %.200s", text)
+	}
+}
+
+// An unusable origin_id alongside origin must not bypass the
+// mutual-exclusion rule and plan by name.
+func TestTripsTool_InvalidOriginIDWithOriginIsRejected(t *testing.T) {
+	_, handler := TripsTool(newMockDoer(loadTestData(t, "trips.json")))
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Slussen", "origin_id": 9702.5, "destination": "T-Centralen", "skip_deviations": true}
+	result, _ := handler(context.Background(), req)
+	if !result.IsError {
+		t.Errorf("expected an error for origin + invalid origin_id, got %.200s", result.Content[0].(mcp.TextContent).Text)
+	}
+}
+
+func TestResolveTool_StopOnlyAcceptsStringForm(t *testing.T) {
+	_, handler := ResolveTool(newMockDoer(loadTestData(t, "stop_finder.json")))
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": "Slussen", "stop_only": "false"}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+	if !strings.Contains(text, `"type":"poi"`) {
+		t.Errorf("stop_only=\"false\" should behave like false and surface the POI candidate, got %.300s", text)
+	}
+}
+
+// A naive ISO time (no zone offset) is taken as Europe/Stockholm, so callers
+// don't have to know the current DST offset; seconds are optional.
+func TestTripsTool_TimeWithoutOffsetIsStockholmLocal(t *testing.T) {
+	for _, in := range []string{"2026-09-22T09:05:00", "2026-09-22T09:05"} {
+		mock := newMockDoer(loadTestData(t, "trips.json"))
+		_, handler := TripsTool(mock)
+		req := mcp.CallToolRequest{}
+		req.Params.Arguments = map[string]any{"origin": "A", "destination": "B", "time": in, "skip_deviations": true}
+		result, _ := handler(context.Background(), req)
+		if result.IsError {
+			t.Fatalf("time=%q should be accepted, got %s", in, result.Content[0].(mcp.TextContent).Text)
+		}
+		q := mock.lastReq.URL.Query()
+		if q.Get("itd_date") != "20260922" || q.Get("itd_time") != "0905" {
+			t.Errorf("time=%q: expected itd_date=20260922 itd_time=0905, got %q %q", in, q.Get("itd_date"), q.Get("itd_time"))
+		}
+	}
+}

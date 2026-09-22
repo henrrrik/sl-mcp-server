@@ -27,17 +27,16 @@ func NearestStopsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFun
 		mcp.WithNumber("lat", mcp.Required(), mcp.Description("Latitude (WGS84, e.g. 59.3311 for T-Centralen).")),
 		mcp.WithNumber("lon", mcp.Required(), mcp.Description("Longitude (WGS84, e.g. 18.0593 for T-Centralen).")),
 		mcp.WithNumber("radius_m", mcp.Description("Maximum distance from (lat, lon) in meters. Default 500.")),
-		mcp.WithNumber("limit", mcp.Description("Maximum number of stops to return. Default 5.")),
+		mcp.WithNumber("limit", mcp.Description("Maximum number of stops to return. Default 5; pass 0 for every stop within radius_m.")),
 		// TODO: transport_mode filter would need a sites → lines join; the
 		// upstream /v1/sites catalog doesn't surface served modes directly.
 		// Leaving it off v1 since the data for it isn't one API call away.
 	)
 
 	handler := func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		args := request.GetArguments()
-		lat, latOK := coerceFloat(args["lat"])
-		lon, lonOK := coerceFloat(args["lon"])
-		if !latOK || !lonOK {
+		lat, latErr := request.RequireFloat("lat")
+		lon, lonErr := request.RequireFloat("lon")
+		if latErr != nil || lonErr != nil {
 			return mcp.NewToolResultError("lat and lon are required numeric arguments"), nil
 		}
 
@@ -45,9 +44,11 @@ func NearestStopsTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFun
 		if radiusM <= 0 {
 			radiusM = defaultNearestRadiusM
 		}
+		// limit=0 means unlimited, as in every other tool; only an absent
+		// limit gets the default.
 		limit := request.GetInt("limit", defaultNearestLimit)
-		if limit <= 0 {
-			limit = defaultNearestLimit
+		if limit < 0 {
+			limit = 0
 		}
 
 		u := slclient.BuildURL(transportBase, "/v1/sites", nil)
@@ -145,19 +146,4 @@ func haversineM(lat1, lon1, lat2, lon2 float64) float64 {
 			math.Sin(dLon/2)*math.Sin(dLon/2)
 	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
 	return earthRadiusM * c
-}
-
-// coerceFloat extracts a float64 from a raw MCP argument. Accepts numbers
-// (JSON numbers arrive as float64) and returns (0, false) on anything else.
-func coerceFloat(v any) (float64, bool) {
-	switch t := v.(type) {
-	case float64:
-		return t, true
-	case int:
-		return float64(t), true
-	case int64:
-		return float64(t), true
-	default:
-		return 0, false
-	}
 }
