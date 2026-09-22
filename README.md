@@ -108,6 +108,7 @@ Leg modes: `bus`, `train`, `metro`, `tram`, `ship`, `walk`. Transit legs carry `
     "hint": "Resolved to a non-stop (POI/address/locality). …" }
   ```
 
+- **`deviations_unavailable`.** If the best-effort `/v1/messages` fetch fails, the trip is still returned but `warnings` carries `{"code":"deviations_unavailable","detail":"<upstream error>"}` — a leg without `deviations` then means *unknown*, not *none*. `departures` attaches the same warning when it has to fall back to upstream's own `stop_deviations`.
 - **`ambiguous_origin` / `ambiguous_destination` / `ambiguous_both`.** When genuine ambiguity remains (e.g. two stations both at `match_quality=1000`), the tool returns candidate pickers instead of journeys. Pass the chosen `id` back as `origin_id` or `destination_id` in the next call.
 
 ### `departures`
@@ -282,7 +283,7 @@ PORT=5000 ./sl-mcp-server
 
 ### Caching, retries and upstream errors
 
-Transient upstream failures (connection errors, `429`, `5xx`) on GET requests are retried once after a short backoff (or a small `Retry-After`). When SL still answers with a non-2xx status, the tool returns a structured error `{"error":"upstream_http_error","status":…,"url":…,"body":"<first 300 chars>","retry_after":…}`; requests that never get a reply return `upstream_unreachable` or `upstream_timeout`.
+Transient upstream failures (connection errors, `429`, `5xx`) on GET requests are retried once after a short backoff (or a small `Retry-After`). When SL still answers with a non-2xx status, the tool returns a structured error `{"error":"upstream_http_error","status":…,"url":…,"body":"<first 300 chars>","retry_after":…}`; requests that never get a reply return `upstream_unreachable` or `upstream_timeout`. When `trips` needs `stop_finder` to resolve an ambiguity and that call fails, the upstream error is returned instead of an empty candidate picker.
 
 Slowly-changing upstream payloads are cached in memory per process: the `/v1/sites`, `/v1/lines`, `/v1/stop-points` and `/v1/transport-authorities` catalogs for 1 hour, and the `/v1/messages` deviations snapshot for 30 seconds. Concurrent misses for the same URL are coalesced into one upstream fetch. Real-time endpoints (departures, trips, stop-finder) always go upstream. `departures` and `trips` fetch `/v1/messages` concurrently with their primary request.
 

@@ -14,6 +14,18 @@
 - GET requests that fail with a transport error, `429` or `5xx` are
   retried once after 250 ms (or a `Retry-After` of up to 2 s), below the
   response cache so coalesced callers share the retry.
+- `trips`: when the broker flags ambiguity and the follow-up `stop_finder`
+  call fails, the upstream error is returned. Previously the failure was
+  swallowed and the caller got `ambiguous_origin` with an empty
+  `candidates` list.
+- `trips` and `departures`: a failed best-effort `/v1/messages` fetch now
+  adds a `deviations_unavailable` warning (with the upstream error) so a
+  missing `deviations` field is distinguishable from "no disruptions".
+- Request log lines now classify the outcome: `outcome=ok`,
+  `outcome=structured_error code=…` for text results carrying an
+  `{"error": …}` envelope (pickers, not-a-stop hints, site-id errors), or
+  `error=true code=… status=…` for failures — so operators can tell SL
+  outages from bad input.
 
 ### argument handling (all tools)
 

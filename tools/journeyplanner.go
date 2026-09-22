@@ -215,7 +215,9 @@ func trimmedTripsResult(body []byte, warnings []tripWarning, messages func() ([]
 	tt.Warnings = warnings
 
 	if messages != nil {
-		enrichWithDeviations(tt, messages)
+		if w := enrichWithDeviations(tt, messages); w != nil {
+			tt.Warnings = append(tt.Warnings, *w)
+		}
 	}
 
 	out, err := json.Marshal(tt)
@@ -250,18 +252,22 @@ func resolveTripSideParam(request mcp.CallToolRequest, side, name string) (strin
 
 // enrichWithDeviations waits for the prefetched /v1/messages snapshot and
 // attaches any active entry that matches each transit leg's (line, mode).
-// Failures are swallowed — the trips response is still returned without
-// deviations.
-func enrichWithDeviations(tt *trimmedTrips, messages func() ([]byte, *mcp.CallToolResult)) {
+// A failed fetch is non-fatal: the trips response is still returned, with
+// a deviations_unavailable warning so the missing field can't be mistaken
+// for "no disruptions".
+func enrichWithDeviations(tt *trimmedTrips, messages func() ([]byte, *mcp.CallToolResult)) *tripWarning {
 	body, errResult := messages()
 	if errResult != nil {
-		return
+		w := deviationsUnavailableWarning(errResult)
+		return &w
 	}
 	index, err := indexDeviations(body)
 	if err != nil {
-		return
+		w := tripWarning{Code: warnDeviationsUnavailable, Detail: "decode: " + err.Error()}
+		return &w
 	}
 	attachDeviations(tt, index)
+	return nil
 }
 
 // fetchTripsWithAmbiguityResolution fetches /v2/trips. When the broker reports
@@ -353,7 +359,10 @@ func (s ambiguousSide) notAStop() bool {
 // remaining stop candidates — including when the retry itself comes back
 // ambiguous.
 func resolveAmbiguity(ctx context.Context, client slclient.HTTPDoer, params url.Values, origin, destination string, originAmb, destAmb bool) ([]byte, []tripWarning, *mcp.CallToolResult) {
-	oc, dc := fetchCandidatesInParallel(ctx, client, origin, destination, originAmb, destAmb)
+	oc, dc, errResult := fetchCandidatesInParallel(ctx, client, origin, destination, originAmb, destAmb)
+	if errResult != nil {
+		return nil, nil, errResult
+	}
 	o := newAmbiguousSide("origin", origin, originAmb, oc)
 	d := newAmbiguousSide("destination", destination, destAmb, dc)
 	for _, s := range []ambiguousSide{o, d} {
@@ -556,28 +565,38 @@ func candidateFromStopEvent(e upstreamStopEvent) locationCandidate {
 }
 
 // fetchCandidatesInParallel resolves stop-finder candidates for the ambiguous
-// sides concurrently. Non-ambiguous sides get a nil slice.
-func fetchCandidatesInParallel(ctx context.Context, client slclient.HTTPDoer, origin, destination string, originAmb, destAmb bool) ([]locationCandidate, []locationCandidate) {
+// sides concurrently. Non-ambiguous sides get a nil slice. A stop-finder
+// failure on either side is returned as-is: without candidates the
+// ambiguity can't be resolved, and an empty picker would invite the user
+// to choose from nothing.
+func fetchCandidatesInParallel(ctx context.Context, client slclient.HTTPDoer, origin, destination string, originAmb, destAmb bool) ([]locationCandidate, []locationCandidate, *mcp.CallToolResult) {
 	var (
-		oc, dc []locationCandidate
-		wg     sync.WaitGroup
+		oc, dc       []locationCandidate
+		ocErr, dcErr *mcp.CallToolResult
+		wg           sync.WaitGroup
 	)
 	if originAmb {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			oc, _ = resolveCandidates(ctx, client, origin)
+			oc, ocErr = resolveCandidates(ctx, client, origin)
 		}()
 	}
 	if destAmb {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			dc, _ = resolveCandidates(ctx, client, destination)
+			dc, dcErr = resolveCandidates(ctx, client, destination)
 		}()
 	}
 	wg.Wait()
-	return oc, dc
+	if ocErr != nil {
+		return nil, nil, ocErr
+	}
+	if dcErr != nil {
+		return nil, nil, dcErr
+	}
+	return oc, dc, nil
 }
 
 // buildAmbiguityErrorResult produces the ambiguous_origin / ambiguous_destination

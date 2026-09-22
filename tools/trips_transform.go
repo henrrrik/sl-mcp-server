@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/henrrrik/sl-mcp-server/slclient"
+	"github.com/mark3labs/mcp-go/mcp"
 )
 
 // upstreamTrips mirrors the fields of the SL journey-planner /v2/trips
@@ -90,8 +91,18 @@ type tripWarning struct {
 	Code     string              `json:"code"`
 	Side     string              `json:"side,omitempty"`
 	Query    string              `json:"query,omitempty"`
+	Detail   string              `json:"detail,omitempty"`
 	Picked   *locationCandidate  `json:"picked,omitempty"`
 	Shadowed []locationCandidate `json:"shadowed,omitempty"`
+}
+
+// warnDeviationsUnavailable is the warning attached when the best-effort
+// /v1/messages fetch fails: the response is still valid, but any missing
+// `deviations` is an unknown, not "no disruptions".
+const warnDeviationsUnavailable = "deviations_unavailable"
+
+func deviationsUnavailableWarning(errResult *mcp.CallToolResult) tripWarning {
+	return tripWarning{Code: warnDeviationsUnavailable, Detail: errResultText(errResult)}
 }
 
 // resolvedTrip echoes the actual origin/destination the planner used, so
@@ -605,8 +616,21 @@ func resolvedFromStopEvent(e upstreamStopEvent) resolvedLocation {
 // Used by verbose=true so callers still see both even when the rest of the
 // payload is passed through untrimmed.
 func injectVerboseExtras(body []byte, warnings []tripWarning) ([]byte, error) {
-	resolved := extractResolved(body)
-	if resolved == nil && len(warnings) == 0 {
+	extras := map[string]any{}
+	if resolved := extractResolved(body); resolved != nil {
+		extras["resolved"] = resolved
+	}
+	if len(warnings) > 0 {
+		extras["warnings"] = warnings
+	}
+	return injectTopLevel(body, extras)
+}
+
+// injectTopLevel adds the given keys to a JSON object body and re-marshals
+// it. A body that isn't an object (or an empty extras map) is returned
+// unchanged.
+func injectTopLevel(body []byte, extras map[string]any) ([]byte, error) {
+	if len(extras) == 0 {
 		return body, nil
 	}
 	var raw map[string]json.RawMessage
@@ -616,19 +640,12 @@ func injectVerboseExtras(body []byte, warnings []tripWarning) ([]byte, error) {
 	if raw == nil {
 		return body, nil
 	}
-	if resolved != nil {
-		r, err := json.Marshal(resolved)
+	for k, v := range extras {
+		b, err := json.Marshal(v)
 		if err != nil {
 			return nil, err
 		}
-		raw["resolved"] = r
-	}
-	if len(warnings) > 0 {
-		w, err := json.Marshal(warnings)
-		if err != nil {
-			return nil, err
-		}
-		raw["warnings"] = w
+		raw[k] = b
 	}
 	return json.Marshal(raw)
 }
@@ -637,11 +654,15 @@ func injectVerboseExtras(body []byte, warnings []tripWarning) ([]byte, error) {
 // every match ranked by matchQuality with an exact-name tie-break. Callers
 // cap the list when they emit it (capCandidates) so that ranking — not
 // upstream's arbitrary order — decides which candidates a user sees.
-func resolveCandidates(ctx context.Context, client slclient.HTTPDoer, query string) ([]locationCandidate, error) {
+//
+// Failures come back as the structured upstream error result so the caller
+// can surface them verbatim — an ambiguity that can't be resolved because
+// stop-finder is down is an outage, not "no candidates".
+func resolveCandidates(ctx context.Context, client slclient.HTTPDoer, query string) ([]locationCandidate, *mcp.CallToolResult) {
 	u := slclient.BuildURL(journeyPlannerBase, "/v2/stop-finder", stopFinderParams(query))
 	body, errResult := fetchJSONRaw(ctx, client, u)
 	if errResult != nil {
-		return nil, fmt.Errorf("stop-finder failed: %s", errResultText(errResult))
+		return nil, errResult
 	}
 
 	var sf struct {
@@ -658,7 +679,7 @@ func resolveCandidates(ctx context.Context, client slclient.HTTPDoer, query stri
 		} `json:"locations"`
 	}
 	if err := json.Unmarshal(body, &sf); err != nil {
-		return nil, fmt.Errorf("stop-finder decode: %w", err)
+		return nil, mcp.NewToolResultError(fmt.Sprintf("stop-finder decode: %v", err))
 	}
 
 	out := make([]locationCandidate, 0, len(sf.Locations))
