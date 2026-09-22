@@ -2845,3 +2845,58 @@ func TestTripsTool_TimeWithoutOffsetIsStockholmLocal(t *testing.T) {
 		}
 	}
 }
+
+// When the broker flags ambiguity and stop-finder itself fails, the caller
+// must see the upstream failure — not an ambiguous_origin picker with an
+// empty candidates list that invites the user to choose from nothing.
+func TestTripsTool_StopFinderFailureIsSurfacedNotEmptyPicker(t *testing.T) {
+	tripsErr := `{"systemMessages":[{"type":"error","module":"BROKER","code":-8011,"text":"origin: multiple matches"}]}`
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: tripsErr},
+		{pathContains: "/v2/stop-finder", status: 500, body: "upstream down"},
+	}}
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Alvik", "destination": "T-Centralen", "skip_deviations": true}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+	if !result.IsError {
+		t.Fatalf("expected an error result when stop-finder fails, got %.300s", text)
+	}
+	if !strings.Contains(text, `"error":"upstream_http_error"`) || !strings.Contains(text, `"status":500`) {
+		t.Errorf("expected the structured upstream error, got %.300s", text)
+	}
+}
+
+// A failed /v1/messages fetch must be visible: legs without `deviations`
+// are byte-identical to "no disruptions" otherwise.
+func TestTripsTool_DeviationsFetchFailureAddsWarning(t *testing.T) {
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v2/trips", body: loadTestData(t, "trips.json")},
+		{pathContains: "/v1/messages", body: "upstream error", status: 503},
+	}}
+	_, handler := TripsTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"origin": "Vällingby", "destination": "Stockholm City"}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+	if result.IsError {
+		t.Fatalf("trips must still succeed, got %s", text)
+	}
+	var out struct {
+		Journeys []json.RawMessage `json:"journeys"`
+		Warnings []struct {
+			Code   string `json:"code"`
+			Detail string `json:"detail"`
+		} `json:"warnings"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(out.Journeys) == 0 {
+		t.Errorf("journeys must still be returned")
+	}
+	if len(out.Warnings) != 1 || out.Warnings[0].Code != "deviations_unavailable" || !strings.Contains(out.Warnings[0].Detail, "upstream_http_error") {
+		t.Errorf("expected a deviations_unavailable warning naming the upstream error, got %+v", out.Warnings)
+	}
+}

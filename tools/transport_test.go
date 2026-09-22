@@ -2079,3 +2079,51 @@ func TestFetchJSONRaw_DeadlineIsUpstreamTimeout(t *testing.T) {
 		t.Errorf("expected upstream_timeout, got %v", p)
 	}
 }
+
+// The /v1/messages fallback changes stop_deviations' provenance (and entry
+// shape); the response must say so instead of looking like a normal answer.
+func TestDeparturesTool_MessagesFailureAddsWarning(t *testing.T) {
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v1/sites/9001/departures", body: departuresFixture(1051, 5310)},
+		{pathContains: "/v1/messages", status: 503, body: "upstream down"},
+	}}
+	_, handler := DeparturesTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": "9001"}
+	result, _ := handler(context.Background(), req)
+	text := result.Content[0].(mcp.TextContent).Text
+	if result.IsError {
+		t.Fatalf("departures must still succeed, got %s", text)
+	}
+	var out struct {
+		Departures []any `json:"departures"`
+		Warnings   []struct {
+			Code   string `json:"code"`
+			Detail string `json:"detail"`
+		} `json:"warnings"`
+	}
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(out.Departures) == 0 {
+		t.Errorf("departures must still be returned")
+	}
+	if len(out.Warnings) != 1 || out.Warnings[0].Code != "deviations_unavailable" || !strings.Contains(out.Warnings[0].Detail, "upstream_http_error") {
+		t.Errorf("expected a deviations_unavailable warning, got %+v", out.Warnings)
+	}
+}
+
+// No warning when everything worked.
+func TestDeparturesTool_NoWarningsOnSuccess(t *testing.T) {
+	mock := &routedMock{routes: []mockRoute{
+		{pathContains: "/v1/sites/9001/departures", body: departuresFixture(1051)},
+		{pathContains: "/v1/messages", body: "[]"},
+	}}
+	_, handler := DeparturesTool(mock)
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"site_id": "9001"}
+	result, _ := handler(context.Background(), req)
+	if strings.Contains(result.Content[0].(mcp.TextContent).Text, `"warnings"`) {
+		t.Errorf("no warnings expected on success")
+	}
+}

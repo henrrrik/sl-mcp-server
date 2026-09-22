@@ -246,12 +246,20 @@ func DeparturesTool(client slclient.HTTPDoer) (mcp.Tool, server.ToolHandlerFunc)
 		}
 
 		// Best-effort: if /v1/messages fails, trimDepartures falls back to
-		// filtering upstream's (less trustworthy) stop_deviations.
-		msgsBody, _ := messages()
+		// filtering upstream's (less trustworthy) stop_deviations, and the
+		// response says so — the fallback entries have a different shape and
+		// no publish-window check.
+		msgsBody, msgsErr := messages()
 
 		trimmed, err := trimDepartures(body, msgsBody, filters, request.GetBool("verbose", false))
 		if err != nil {
 			return mcp.NewToolResultError(fmt.Sprintf("failed to reshape departures response: %v", err)), nil
+		}
+		if msgsErr != nil {
+			trimmed, err = injectTopLevel(trimmed, map[string]any{"warnings": []tripWarning{deviationsUnavailableWarning(msgsErr)}})
+			if err != nil {
+				return mcp.NewToolResultError(fmt.Sprintf("failed to attach warnings: %v", err)), nil
+			}
 		}
 		return mcp.NewToolResultText(string(trimmed)), nil
 	}
