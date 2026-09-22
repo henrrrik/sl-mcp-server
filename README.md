@@ -280,7 +280,9 @@ go build -o sl-mcp-server
 PORT=5000 ./sl-mcp-server
 ```
 
-### Caching
+### Caching, retries and upstream errors
+
+Transient upstream failures (connection errors, `429`, `5xx`) on GET requests are retried once after a short backoff (or a small `Retry-After`). When SL still answers with a non-2xx status, the tool returns a structured error `{"error":"upstream_http_error","status":…,"url":…,"body":"<first 300 chars>","retry_after":…}`; requests that never get a reply return `upstream_unreachable` or `upstream_timeout`.
 
 Slowly-changing upstream payloads are cached in memory per process: the `/v1/sites`, `/v1/lines`, `/v1/stop-points` and `/v1/transport-authorities` catalogs for 1 hour, and the `/v1/messages` deviations snapshot for 30 seconds. Concurrent misses for the same URL are coalesced into one upstream fetch. Real-time endpoints (departures, trips, stop-finder) always go upstream. `departures` and `trips` fetch `/v1/messages` concurrently with their primary request.
 

@@ -21,9 +21,13 @@ func main() {
 		port = "5000"
 	}
 
-	// Catalogs and the deviations snapshot are served from memory between
-	// upstream refreshes; real-time endpoints always go upstream.
-	client := slclient.NewCachingClient(slclient.NewClient(), slclient.SLCacheRules)
+	// Transient upstream failures (connection errors, 429, 5xx) get one
+	// retry; catalogs and the deviations snapshot are then served from
+	// memory between refreshes. Real-time endpoints always go upstream.
+	client := slclient.NewCachingClient(
+		slclient.NewRetryingClient(slclient.NewClient(), 2, 250*time.Millisecond),
+		slclient.SLCacheRules,
+	)
 	mcpServer := NewSLServer(client)
 
 	srv, shutdown := newHTTPServer(":"+port, mcpServer)
